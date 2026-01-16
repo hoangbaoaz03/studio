@@ -15,6 +15,7 @@ from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django.dispatch import receiver
 from model_utils.managers import InheritanceManager
+from modeltranslation.manager import MultilingualManager
 
 from course.models import Course
 from core.utils import unique_slug_generator
@@ -31,6 +32,8 @@ CATEGORY_OPTIONS = (
     ("practice", _("Practice Quiz")),
 )
 
+class QuestionManager(MultilingualManager, InheritanceManager):
+    pass
 
 class QuizManager(models.Manager):
     def search(self, query=None):
@@ -85,6 +88,27 @@ class Quiz(models.Model):
         verbose_name=_("Pass Mark"),
         validators=[MaxValueValidator(100)],
         help_text=_("Percentage required to pass exam."),
+    )
+    time_limit = models.PositiveIntegerField(
+        default=0,
+        verbose_name=_("Time Limit"),
+        help_text=_("Duration of the quiz in minutes. 0 for no limit."),
+    )
+    max_attempts = models.PositiveIntegerField(
+        default=0,
+        verbose_name=_("Max Attempts"),
+        help_text=_("Number of times a user can take this quiz. 0 for unlimited."),
+    )
+    allow_backtracking = models.BooleanField(
+        default=True,
+        verbose_name=_("Allow Backtracking"),
+        help_text=_("If no, users cannot go back to previous questions."),
+    )
+    start_date = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Start Date"), help_text=_("When the quiz becomes available")
+    )
+    end_date = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("End Date"), help_text=_("Deadline for the quiz")
     )
     draft = models.BooleanField(
         default=False,
@@ -389,7 +413,7 @@ class Question(models.Model):
         verbose_name=_("Explanation"),
     )
 
-    objects = InheritanceManager()
+    objects = QuestionManager()
 
     class Meta:
         verbose_name = _("Question")
@@ -481,3 +505,73 @@ class EssayQuestion(Question):
 
     def answer_choice_to_string(self, guess):
         return str(guess)
+
+
+# ########################################################
+# New Models for Redesign (LMS Standard)
+# ########################################################
+
+class QuizAttempt(models.Model):
+    STATUS_CHOICES = (
+        ("started", _("Started")),
+        ("in_progress", _("In Progress")),
+        ("submitted", _("Submitted")),
+        ("graded", _("Graded")),
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name=_("User"), on_delete=models.CASCADE
+    )
+    quiz = models.ForeignKey(Quiz, verbose_name=_("Quiz"), on_delete=models.CASCADE)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="started")
+    
+    score = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True, verbose_name=_("Score")
+    )
+    start_time = models.DateTimeField(auto_now_add=True, verbose_name=_("Start Time"))
+    submit_time = models.DateTimeField(null=True, blank=True, verbose_name=_("Submit Time"))
+    
+    current_question = models.ForeignKey(
+        Question, on_delete=models.SET_NULL, null=True, blank=True, related_name="current_for_attempts"
+    )
+
+    class Meta:
+        verbose_name = _("Quiz Attempt")
+        verbose_name_plural = _("Quiz Attempts")
+        ordering = ("-start_time",)
+
+    def __str__(self):
+        return f"{self.user} - {self.quiz} ({self.status})"
+    
+    @property
+    def get_percent_correct(self):
+        if not self.score:
+            return 0
+        total_questions = self.quiz.question_set.count()
+        if total_questions == 0:
+            return 0
+        # If score is based on questions count (which it likely is for now)
+        # Or if score is percentage already. Assuming score is raw points.
+        percent = (self.score / total_questions) * 100
+        return min(max(int(round(percent)), 0), 100)
+
+class UserResponse(models.Model):
+    attempt = models.ForeignKey(QuizAttempt, on_delete=models.CASCADE, related_name="responses")
+    question = models.ForeignKey(Question, on_delete=models.CASCADE)
+    
+    # For MCQ
+    selected_choice = models.ForeignKey(Choice, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # For Essay or general text capture
+    text_answer = models.TextField(null=True, blank=True)
+    
+    is_correct = models.BooleanField(null=True, blank=True)
+    marks = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    
+    flagged = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ("attempt", "question")
+
+    def __str__(self):
+        return f"Response to {self.question} by {self.attempt.user}"

@@ -1,186 +1,347 @@
+"""
+Result/Enrollment models for marketplace
+Replaces academic grading system with enrollment tracking
+"""
 from decimal import Decimal
 from django.conf import settings
-
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
-from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 
-from accounts.models import Student
-from core.models import Semester
-from course.models import Course
-
-A_PLUS = "A+"
-A = "A"
-A_MINUS = "A-"
-B_PLUS = "B+"
-B = "B"
-B_MINUS = "B-"
-C_PLUS = "C+"
-C = "C"
-D_MINUS = "D+"
-D = "D"
-F = "F"
-NG = "NG"
-
-GRADE_CHOICES = (
-    (A_PLUS, "A+"),
-    (A, "A"),
-    (A_MINUS, "A-"),
-    (B_PLUS, "B+"),
-    (B, "B"),
-    (B_MINUS, "B-"),
-    (C_PLUS, "C+"),
-    (C, "C"),
-    (D_MINUS, "D+"),
-    (D, "D"),
-    (F, "F"),
-    (NG, "NG"),
-)
-
-PASS = "PASS"
-FAIL = "FAIL"
-
-COMMENT_CHOICES = (
-    (PASS, "PASS"),
-    (FAIL, "FAIL"),
-)
-
-GRADE_BOUNDARIES = [
-    (9.0, A_PLUS),
-    (8.5, A),
-    (8, B_PLUS),
-    (7.0, B),
-    (6.5, C_PLUS),
-    (5.5, C),
-    (5.0, D_MINUS),
-    (4.5, D),
-    (0, F),
-]
-
-GRADE_POINT_MAPPING = {
-    A_PLUS: 4.0,
-    A: 4.0,
-    A_MINUS: 3.75,
-    B_PLUS: 3.5,
-    B: 3.0,
-    B_MINUS: 2.75,
-    C_PLUS: 2.5,
-    C: 2.0,
-    D_MINUS: 1.5,
-    D: 1.0,
-    F: 0.0,
-    NG: 0.0,
-}
+from course.models import Course, Lecture
 
 
-class TakenCourse(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+class Enrollment(models.Model):
+    """
+    Student enrollment in a course
+    Replaces TakenCourse - focuses on access and progress, not grades
+    """
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='enrollments'
+    )
     course = models.ForeignKey(
-        Course, on_delete=models.CASCADE, related_name="taken_courses"
+        Course,
+        on_delete=models.CASCADE,
+        related_name='enrollments'
     )
-    assignment = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0.00")
+    
+    # Purchase info
+    price_paid = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=0.00,
+        help_text=_("Price paid at enrollment")
     )
-    mid_exam = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0.00")
+    payment_method = models.CharField(max_length=50, blank=True)
+    transaction_id = models.CharField(max_length=200, blank=True)
+    
+    # Progress tracking
+    progress_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0.00,
+        validators=[MinValueValidator(0), MaxValueValidator(100)]
     )
-    quiz = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
-    attendance = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0.00")
+    last_accessed_lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+'
     )
-    final_exam = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0.00")
-    )
-    total = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0.00"), editable=False
-    )
-    grade = models.CharField(
-        choices=GRADE_CHOICES, max_length=2, blank=True, editable=False
-    )
-    point = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal("0.00"), editable=False
-    )
-    comment = models.CharField(
-        choices=COMMENT_CHOICES, max_length=200, blank=True, editable=False
-    )
-
-    def get_absolute_url(self):
-        return reverse("course_detail", kwargs={"slug": self.course.slug})
-
+    
+    # Timestamps
+    enrolled_at = models.DateTimeField(auto_now_add=True)
+    last_accessed = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Certificate
+    certificate_issued = models.BooleanField(default=False)
+    certificate_number = models.CharField(max_length=100, blank=True, unique=True)
+    
+    class Meta:
+        ordering = ['-enrolled_at']
+        unique_together = ['student', 'course']
+        indexes = [
+            models.Index(fields=['student', '-enrolled_at']),
+            models.Index(fields=['course', '-enrolled_at']),
+        ]
+    
     def __str__(self):
-        return f"{self.course.title} ({self.course.code})"
-
-    def get_total(self):
-        return (
-        Decimal(self.assignment) * Decimal("0.05")
-        + Decimal(self.mid_exam) * Decimal("0.20")
-        + Decimal(self.quiz) * Decimal("0.10")
-        + Decimal(self.attendance) * Decimal("0.05")
-        + Decimal(self.final_exam) * Decimal("0.60")
+        return f"{self.student.username} - {self.course.title}"
+    
+    def update_progress(self):
+        """Calculate completion percentage based on watched lectures"""
+        total_lectures = self.course.total_lectures
+        if total_lectures == 0:
+            self.progress_percent = 0
+            return
+        
+        completed_lectures = LectureProgress.objects.filter(
+            enrollment=self,
+            completed=True
+        ).count()
+        
+        self.progress_percent = round(
+            (completed_lectures / total_lectures) * 100,
+            2
         )
+        
+        # Mark as completed if 100%
+        if self.progress_percent >= 100 and not self.completed_at:
+            from django.utils import timezone
+            self.completed_at = timezone.now()
+            # TODO: Trigger certificate generation
+        
+        self.save()
 
+
+class LectureProgress(models.Model):
+    """
+    Track individual lecture watch progress
+    """
+    enrollment = models.ForeignKey(
+        Enrollment,
+        on_delete=models.CASCADE,
+        related_name='lecture_progress'
+    )
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name='progress_records'
+    )
+    
+    # Progress
+    completed = models.BooleanField(default=False)
+    last_position = models.IntegerField(
+        default=0,
+        help_text=_("Last watched position in seconds")
+    )
+    watch_count = models.IntegerField(default=0)
+    
+    # Timestamps
+    first_watched = models.DateTimeField(auto_now_add=True)
+    last_watched = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ['enrollment', 'lecture']
+        indexes = [
+            models.Index(fields=['enrollment', 'completed']),
+        ]
+    
+    def __str__(self):
+        status = "Completed" if self.completed else f"{self.last_position}s"
+        return f"{self.enrollment.student.username} - {self.lecture.title} ({status})"
+    
+    def mark_complete(self):
+        """Mark lecture as completed"""
+        if not self.completed:
+            from django.utils import timezone
+            self.completed = True
+            self.completed_at = timezone.now()
+            self.save()
             
-    def get_grade(self):
-        total = self.total
-        for boundary, grade in GRADE_BOUNDARIES:
-            if total >= boundary:
-                return grade
-        return NG
-
-    def get_comment(self):
-        if self.grade in [F, NG]:
-            return FAIL
-        return PASS
-
-    def get_point(self):
-        credit = self.course.credit
-        grade_point = GRADE_POINT_MAPPING.get(self.grade, 0.0)
-        return Decimal(credit) * Decimal(grade_point)
-
-    def save(self, *args, **kwargs):
-        self.total = self.get_total()
-        self.grade = self.get_grade()
-        self.point = self.get_point()
-        self.comment = self.get_comment()
-        super().save(*args, **kwargs)
-
-    def calculate_gpa(self):
-        current_semester = Semester.objects.filter(is_current_semester=True).first()
-        if not current_semester:
-            return Decimal("0.00")
-
-        taken_courses = TakenCourse.objects.filter(
-            student=self.student,
-            course__level=self.student.level,
-            course__semester=current_semester.semester,
-        )
-
-        total_points = sum(tc.point for tc in taken_courses)
-        total_credits = sum(tc.course.credit for tc in taken_courses)
-
-        if total_credits > 0:
-            gpa = total_points / Decimal(total_credits)
-            return round(gpa, 2)
-        return Decimal("0.00")
-
-    def calculate_cgpa(self):
-        taken_courses = TakenCourse.objects.filter(student=self.student)
-
-        total_points = sum(tc.point for tc in taken_courses)
-        total_credits = sum(tc.course.credit for tc in taken_courses)
-
-        if total_credits > 0:
-            cgpa = total_points / Decimal(total_credits)
-            return round(cgpa, 2)
-        return Decimal("0.00")
+            # Update enrollment progress
+            self.enrollment.update_progress()
 
 
-class Result(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE)
-    gpa = models.FloatField(null=True)
-    cgpa = models.FloatField(null=True)
-    semester = models.CharField(max_length=100, choices=settings.SEMESTER_CHOICES)
-    session = models.CharField(max_length=100, blank=True, null=True)
-    level = models.CharField(max_length=25, choices=settings.LEVEL_CHOICES, null=True)
-
+class Review(models.Model):
+    """
+    Course reviews and ratings
+    """
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+    enrollment = models.OneToOneField(
+        Enrollment,
+        on_delete=models.CASCADE,
+        related_name='review'
+    )
+    
+    # Review content
+    rating = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        help_text=_("1-5 stars")
+    )
+    title = models.CharField(max_length=200, blank=True)
+    comment = models.TextField()
+    
+    # Helpfulness voting
+    helpful_count = models.IntegerField(default=0)
+    not_helpful_count = models.IntegerField(default=0)
+    
+    # Status
+    is_featured = models.BooleanField(
+        default=False,
+        help_text=_("Featured review on course page")
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = ['student', 'course']
+        indexes = [
+            models.Index(fields=['course', '-created_at']),
+            models.Index(fields=['course', '-helpful_count']),
+        ]
+    
     def __str__(self):
-        return f"Result for {self.student} - Semester: {self.semester}, Level: {self.level}"
+        return f"{self.student.username} - {self.course.title} ({self.rating}★)"
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Update course rating
+        self.course.update_stats()
+
+
+class ReviewHelpful(models.Model):
+    """
+    Track who marked a review as helpful/not helpful
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE
+    )
+    review = models.ForeignKey(
+        Review,
+        on_delete=models.CASCADE,
+        related_name='helpfulness_votes'
+    )
+    is_helpful = models.BooleanField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['user', 'review']
+    
+    def __str__(self):
+        vote = "👍" if self.is_helpful else "👎"
+        return f"{self.user.username} {vote} {self.review}"
+
+
+class Question(models.Model):
+    """
+    Q&A for lectures
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='questions'
+    )
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name='questions'
+    )
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='questions'
+    )
+    
+    # Question
+    title = models.CharField(max_length=200)
+    question = models.TextField()
+    
+    # Video timestamp (optional)
+    timestamp = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text=_("Second in video where question applies")
+    )
+    
+    # Status
+    is_answered = models.BooleanField(default=False)
+    answer_count = models.IntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['lecture', '-created_at']),
+            models.Index(fields=['course', '-created_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username}: {self.title}"
+
+
+class Answer(models.Model):
+    """
+    Answers to questions
+    """
+    question = models.ForeignKey(
+        Question,
+        on_delete=models.CASCADE,
+        related_name='answers'
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='answers'
+    )
+    
+    answer = models.TextField()
+    
+    # Metadata
+    is_instructor_answer = models.BooleanField(default=False)
+    upvote_count = models.IntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-is_instructor_answer', '-upvote_count', 'created_at']
+    
+    def __str__(self):
+        return f"Answer by {self.user.username}"
+    
+    def save(self, *args, **kwargs):
+        # Check if user is the course instructor
+        if self.user == self.question.course.instructor:
+            self.is_instructor_answer = True
+        super().save(*args, **kwargs)
+        
+        # Update question answer count
+        self.question.answer_count = self.question.answers.count()
+        if self.question.answer_count > 0:
+            self.question.is_answered = True
+        self.question.save()
+
+
+class Wishlist(models.Model):
+    """
+    User's wishlist for courses
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='wishlist'
+    )
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='wishlisted_by'
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['user', 'course']
+        ordering = ['-added_at']
+    
+    def __str__(self):
+        return f"{self.user.username} → {self.course.title}"

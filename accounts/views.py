@@ -18,8 +18,11 @@ from accounts.forms import (
     ProgramUpdateForm,
     StaffAddForm,
     StudentAddForm,
+    StudentAddForm,
+    StudentRegisterForm,
+    InstructorRequestForm,
 )
-from accounts.models import Parent, Student, User
+from accounts.models import Parent, Student, User, InstructorRequest
 from core.models import Semester, Session
 from course.models import Course
 from result.models import TakenCourse
@@ -53,17 +56,95 @@ def validate_username(request):
 
 def register(request):
     if request.method == "POST":
-        form = StudentAddForm(request.POST)
+        form = StudentRegisterForm(request.POST)
         if form.is_valid():
             form.save()
-            messages.success(request, "Account created successfully.")
+            messages.success(request, "Account created successfully. Please wait for admin approval.")
             return redirect("login")
         messages.error(
             request, "Something is not correct, please fill all fields correctly."
         )
     else:
-        form = StudentAddForm()
+        form = StudentRegisterForm()
     return render(request, "registration/register.html", {"form": form})
+
+
+@login_required
+@admin_required
+def pending_users(request):
+    users = User.objects.filter(is_student=True, is_approved=False)
+    return render(request, 'accounts/pending_users.html', {'users': users})
+
+@login_required
+@admin_required
+def approve_user(request, pk):
+    user = get_object_or_404(User, pk=pk)
+    user.is_approved = True
+    user.is_active = True  # Enable login
+    user.save()
+    messages.success(request, f"User {user.username} has been approved and activated.")
+    return redirect('pending_users')
+
+@login_required
+@admin_required
+def reject_user(request, pk):
+    user = get_object_or_404(User, pk=pk)
+    user.delete()
+    messages.success(request, f"User {user.username} has been rejected/deleted.")
+    return redirect('pending_users')
+
+@login_required
+def apply_instructor(request):
+    if request.user.is_lecturer and request.user.is_instructor_approved:
+        messages.info(request, "You are already an instructor.")
+        return redirect('dashboard') # or home
+
+    existing_request = InstructorRequest.objects.filter(user=request.user, status='pending').first()
+    if existing_request:
+        return render(request, 'accounts/instructor_applied.html', {'request': existing_request})
+
+    if request.method == 'POST':
+        form = InstructorRequestForm(request.POST)
+        if form.is_valid():
+            req = form.save(commit=False)
+            req.user = request.user
+            req.save()
+            messages.success(request, "Application submitted successfully.")
+            return redirect('apply_instructor')
+    else:
+        form = InstructorRequestForm()
+    
+    return render(request, 'accounts/apply_instructor.html', {'form': form})
+
+@login_required
+@admin_required
+def manage_instructor_requests(request):
+    requests = InstructorRequest.objects.filter(status='pending').select_related('user')
+    return render(request, 'accounts/manage_instructor_requests.html', {'requests': requests})
+
+@login_required
+@admin_required
+def approve_instructor_request(request, pk):
+    req = get_object_or_404(InstructorRequest, pk=pk)
+    if req.status == 'pending':
+        req.status = 'approved'
+        req.save()
+        user = req.user
+        user.is_lecturer = True
+        user.is_instructor_approved = True
+        user.save()
+        messages.success(request, f"Approved {user.username} as Instructor.")
+    return redirect('manage_instructor_requests')
+
+@login_required
+@admin_required
+def reject_instructor_request(request, pk):
+    req = get_object_or_404(InstructorRequest, pk=pk)
+    req.status = 'rejected'
+    req.save()
+    messages.success(request, f"Rejected request from {req.user.username}.")
+    return redirect('manage_instructor_requests')
+
 
 
 # ########################################################

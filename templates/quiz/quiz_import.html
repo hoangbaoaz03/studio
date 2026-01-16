@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% load i18n %}
+{% load crispy_forms_tags %}
+
+{% block title %}{% trans 'Import Quiz' %} | {{ course.title }}{% endblock %}
+
+{% block content %}
+
+<nav style="--bs-breadcrumb-divider: '>';" aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">{% trans 'Home' %}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'programs' %}">{% trans 'Programs' %}</a></li>
+        <li class="breadcrumb-item"><a href="{{ course.get_absolute_url }}">{{ course }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'quiz_index' course.slug %}">{% trans 'Quizzes' %}</a></li>
+        <li class="breadcrumb-item active" aria-current="page">{% trans 'Import Quiz' %}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-md-3">
+        <div class="card bg-light border-info">
+             <div class="card-header bg-info text-white">{% trans "Instructions" %}</div>
+             <div class="card-body">
+                 <p class="card-text small">
+                    {% trans "Please ensure your Word file follows this format:" %}
+                 </p>
+                 <hr>
+                 <p class="small">
+                    <strong>1. Question text here...</strong><br>
+                    a. Incorrect Answer<br>
+                    b. <strong>Correct Answer (Bold)</strong><br>
+                    c. Incorrect Answer
+                 </p>
+                 <hr>
+                 <p class="small text-muted">
+                    {% trans "Supported format: .docx only." %}
+                 </p>
+             </div>
+        </div>
+    </div>
+    
+    <div class="col-md-9">
+        <div class="card">
+            <div class="card-header">
+                <div class="title-1">{% trans 'Import Quiz from Word' %}</div>
+            </div>
+            <div class="card-body">
+                {% include 'snippets/messages.html' %}
+                <form action="" method="POST" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    {{ form|crispy }}
+                    <br>
+                    <button class="btn btn-success" type="submit">
+                        <i class="fas fa-file-import"></i> {% trans "Import Quiz" %}
+                    </button>
+                    <a class="btn btn-outline-secondary" href="{% url 'quiz_index' course.slug %}">{% trans "Cancel" %}</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

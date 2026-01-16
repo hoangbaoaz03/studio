@@ -1,26 +1,50 @@
-pytz==2022.7  # https://github.com/stub42/pytz
-Pillow==10.2.0  # https://github.com/python-pillow/Pillow        
-whitenoise==6.2.0  # https://github.com/evansd/whitenoise
-
-# Django
-# ------------------------------------------------------------------------------
-django==4.0.8  # pyup: < 4.1  # https://www.djangoproject.com/
-django-model-utils==4.3.1  # https://github.com/jazzband/django-model-utils
-django-crispy-forms==1.14.0  # https://github.com/django-crispy-forms/django-crispy-forms
-crispy-bootstrap5==0.7  # https://github.com/django-crispy-forms/crispy-bootstrap5
-django-filter==23.5 # https://github.com/carltongibson/django-filter
-django-modeltranslation==0.18.11 # https://github.com/Buren/django-modeltranslation
-
-# PDF generator
-reportlab==4.0.4
-xhtml2pdf==0.2.15
-
-# Customize django admin
-django-jet-reboot==1.3.5
-
-# Environment variable
+# Django and Core
+django==5.0.1
 python-decouple==3.8
+Pillow==10.2.0
+pytz==2024.1
+
+# Django REST Framework
+djangorestframework==3.14.0
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.3.1
+drf-spectacular==0.27.1  # API documentation
+
+# Database
+psycopg2-binary==2.9.9  # PostgreSQL
+
+# Caching & Background Tasks
+redis==5.0.1
+celery==5.3.6
+django-redis==5.4.0
+
+# Storage & Media
+boto3==1.34.34  # AWS S3
+django-storages==1.14.2
 
 # Payments
-stripe==5.5.0
-gopay==2.0.1
+stripe==8.0.0
+
+# Authentication & OAuth
+django-allauth==0.61.1
+social-auth-app-django==5.4.0
+
+# Security
+django-ratelimit==4.1.0
+django-defender==0.9.7
+
+# Utilities
+django-filter==23.5
+django-crispy-forms==2.1
+crispy-bootstrap5==2.0.0
+
+# Code Quality (Development)
+black==24.1.1
+flake8==7.0.0
+pytest==7.4.4
+pytest-django==4.7.0
+factory-boy==3.3.0
+
+# Monitoring & Debug
+sentry-sdk==1.40.0
+django-debug-toolbar==4.3.0

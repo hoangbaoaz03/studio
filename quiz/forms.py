@@ -26,10 +26,16 @@ class EssayForm(forms.Form):
 class QuizAddForm(forms.ModelForm):
     class Meta:
         model = Quiz
-        exclude = []
+    class Meta:
+        model = Quiz
+        exclude = ["course"]
+        widgets = {
+            "start_date": forms.DateTimeInput(attrs={"type": "datetime-local", "class": "form-control"}),
+            "end_date": forms.DateTimeInput(attrs={"type": "datetime-local", "class": "form-control"}),
+        }
 
     questions = forms.ModelMultipleChoiceField(
-        queryset=Question.objects.all().select_subclasses(),
+        queryset=Question.objects.all(),
         required=False,
         label=_("Questions"),
         widget=FilteredSelectMultiple(verbose_name=_("Questions"), is_stacked=False),
@@ -101,3 +107,20 @@ MCQuestionFormSet = inlineformset_factory(
     can_delete=True,
     extra=5,
 )
+
+class QuizImportForm(forms.Form):
+    title = forms.CharField(label=_("Quiz Title"), max_length=255)
+    description = forms.CharField(label=_("Description"), widget=forms.Textarea, required=False)
+    file = forms.FileField(label=_("Upload Word File (.docx)"), help_text=_("Format: 1. Question... a. Choice (Bold correct answer)"))
+    time_limit = forms.IntegerField(label=_("Time Limit (mins)"), min_value=0, initial=0, help_text=_("0 for no limit"))
+    max_attempts = forms.IntegerField(label=_("Max Attempts"), min_value=0, initial=0, help_text=_("0 for unlimited"))
+    start_date = forms.DateTimeField(
+        label=_("Start Date"), 
+        required=False,
+        widget=forms.DateTimeInput(attrs={"type": "datetime-local", "class": "form-control"})
+    )
+    end_date = forms.DateTimeField(
+        label=_("End Date"), 
+        required=False,
+        widget=forms.DateTimeInput(attrs={"type": "datetime-local", "class": "form-control"})
+    )

@@ -13,6 +13,8 @@ from .models import (
     Choice,
     EssayQuestion,
     Sitting,
+    QuizAttempt,
+    UserResponse,
 )
 
 
@@ -22,7 +24,7 @@ class ChoiceInline(admin.TabularInline):
 
 class QuizAdminForm(TranslationModelForm):
     questions = forms.ModelMultipleChoiceField(
-        queryset=Question.objects.all().select_subclasses(),
+        queryset=Question.objects.all(),
         required=False,
         label=_("Questions"),
         widget=FilteredSelectMultiple(verbose_name=_("Questions"), is_stacked=False),
@@ -99,3 +101,5 @@ admin.site.register(MCQuestion, MCQuestionAdmin)
 admin.site.register(Progress, ProgressAdmin)
 admin.site.register(EssayQuestion, EssayQuestionAdmin)
 admin.site.register(Sitting)
+admin.site.register(QuizAttempt)
+admin.site.register(UserResponse)

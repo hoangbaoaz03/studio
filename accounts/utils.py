@@ -3,10 +3,11 @@ from datetime import datetime
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from core.utils import send_html_email
+from django.utils.crypto import get_random_string
 
 
-def generate_password():
-    return get_user_model().objects.make_random_password()
+def generate_password(length=8):
+    return get_random_string(length)
 
 
 def generate_student_id():

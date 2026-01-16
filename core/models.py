@@ -1,93 +1,144 @@
+"""
+Core models for marketplace
+Simplified from academic system
+"""
 from django.db import models
-from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 
-NEWS = _("News")
-EVENTS = _("Event")
-
-POST = (
-    (NEWS, _("News")),
-    (EVENTS, _("Event")),
-)
-
-FIRST = _("First")
-SECOND = _("Second")
-THIRD = _("Third")
-
-SEMESTER = (
-    (FIRST, _("First")),
-    (SECOND, _("Second")),
-    (THIRD, _("Third")),
-)
-
-
-class NewsAndEventsQuerySet(models.query.QuerySet):
-    def search(self, query):
-        lookups = (
-            Q(title__icontains=query)
-            | Q(summary__icontains=query)
-            | Q(posted_as__icontains=query)
-        )
-        return self.filter(lookups).distinct()
-
-
-class NewsAndEventsManager(models.Manager):
-    def get_queryset(self):
-        return NewsAndEventsQuerySet(self.model, using=self._db)
-
-    def all(self):
-        return self.get_queryset()
-
-    def get_by_id(self, id):
-        qs = self.get_queryset().filter(
-            id=id
-        )  # NewsAndEvents.objects == self.get_queryset()
-        if qs.count() == 1:
-            return qs.first()
-        return None
-
-    def search(self, query):
-        return self.get_queryset().search(query)
-
-
-class NewsAndEvents(models.Model):
-    title = models.CharField(max_length=200, null=True)
-    summary = models.TextField(max_length=200, blank=True, null=True)
-    posted_as = models.CharField(choices=POST, max_length=10)
-    updated_date = models.DateTimeField(auto_now=True, auto_now_add=False, null=True)
-    upload_time = models.DateTimeField(auto_now=False, auto_now_add=True, null=True)
-
-    objects = NewsAndEventsManager()
-
-    def __str__(self):
-        return f"{self.title}"
-
-
-class Session(models.Model):
-    session = models.CharField(max_length=200, unique=True)
-    is_current_session = models.BooleanField(default=False, blank=True, null=True)
-    next_session_begins = models.DateField(blank=True, null=True)
-
-    def __str__(self):
-        return f"{self.session}"
-
-
-class Semester(models.Model):
-    semester = models.CharField(max_length=10, choices=SEMESTER, blank=True)
-    is_current_semester = models.BooleanField(default=False, blank=True, null=True)
-    session = models.ForeignKey(
-        Session, on_delete=models.CASCADE, blank=True, null=True
+class SiteSettings(models.Model):
+    """
+    Global platform settings
+    """
+    site_name = models.CharField(max_length=100, default="SkyLearn")
+    tagline = models.CharField(max_length=200, blank=True)
+    site_description = models.TextField(blank=True)
+    
+    # Contact
+    contact_email = models.EmailField()
+    support_email = models.EmailField()
+    
+    # Social
+    facebook_url = models.URLField(blank=True)
+    twitter_url = models.URLField(blank=True)
+    instagram_url = models.URLField(blank=True)
+    youtube_url = models.URLField(blank=True)
+    
+    # Platform fees
+    default_platform_fee_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=15.00,
+        help_text=_("Default commission percentage")
     )
-    next_semester_begins = models.DateField(null=True, blank=True)
-
+    
+    # Features
+    enable_course_reviews = models.BooleanField(default=True)
+    enable_qa = models.BooleanField(default=True)
+    enable_wishlist = models.BooleanField(default=True)
+    enable_certificates = models.BooleanField(default=True)
+    
+    # Maintenance
+    maintenance_mode = models.BooleanField(default=False)
+    maintenance_message = models.TextField(blank=True)
+    
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Site Settings"
+        verbose_name_plural = "Site Settings"
+    
     def __str__(self):
-        return f"{self.semester}"
+        return self.site_name
+
+
+class Announcement(models.Model):
+    """
+    Platform-wide announcements
+    Replaces NewsAndEvents
+    """
+    ANNOUNCEMENT_TYPE_CHOICES = [
+        ('info', _('Information')),
+        ('promotion', _('Promotion')),
+        ('update', _('Platform Update')),
+        ('maintenance', _('Maintenance')),
+    ]
+    
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    announcement_type = models.CharField(
+        max_length=20,
+        choices=ANNOUNCEMENT_TYPE_CHOICES,
+        default='info'
+    )
+    
+    # Display
+    is_active = models.BooleanField(default=True)
+    show_on_homepage = models.BooleanField(default=False)
+    
+    # Scheduling
+    start_date = models.DateTimeField()
+    end_date = models.DateTimeField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-start_date']
+    
+    def __str__(self):
+        return self.title
+    
+    def is_current(self):
+        """Check if announcement is currently active"""
+        from django.utils import timezone
+        now = timezone.now()
+        
+        if not self.is_active:
+            return False
+        if now < self.start_date:
+            return False
+        if self.end_date and now > self.end_date:
+            return False
+        
+        return True
 
 
 class ActivityLog(models.Model):
+    """
+    System activity logging
+    """
+    ACTION_CHOICES = [
+        ('course_created', 'Course Created'),
+        ('course_published', 'Course Published'),
+        ('enrollment', 'Student Enrolled'),
+        ('review_posted', 'Review Posted'),
+        ('payout_processed', 'Payout Processed'),
+        ('user_registered', 'User Registered'),
+    ]
+    
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    user = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
     message = models.TextField()
-    created_at = models.DateTimeField(auto_now=True)
-
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=_("Additional data as JSON")
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at']),
+            models.Index(fields=['action', '-created_at']),
+        ]
+    
     def __str__(self):
-        return f"[{self.created_at}]{self.message}"
+        return f"[{self.created_at}] {self.action}: {self.message}"

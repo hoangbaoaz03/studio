@@ -25,7 +25,7 @@
 		{% url 'add_score' as ascore %} {% url 'grade_results' as vr %}{% url 'ass_results' as ar %}
 		{% url 'course_registration' as cr %} {% url 'edit_profile' as ep %} {% url 'change_password' as cp %}
 		{% url 'quiz_progress' as qpr %} {% url 'quiz_marking' as qce %} {% url 'user_course_list' as ucl %}
-		{% url 'admin_panel' as admin_p %}
+		{% url 'admin_panel' as admin_p %} {% url 'apply_instructor' as app_inst %} {% url 'manage_instructor_requests' as manage_req %}
 		
 
 
@@ -109,6 +109,18 @@
 			{% endif %}
 			<br />
 			<p class="ms-3 text-secondary">&RightArrow; Others</p>
+			{% if not request.user.is_lecturer %}
+			<li class="{% if request.path == app_inst %}active{% endif %}">
+				<a href="{% url 'apply_instructor' %}"><i class="fas fa-chalkboard-teacher"></i>{% trans 'Become Instructor' %}</a>
+			</li>
+			{% endif %}
+			
+			{% if request.user.is_superuser %}
+			<li class="{% if request.path == manage_req %}active{% endif %}">
+				<a href="{% url 'manage_instructor_requests' %}"><i class="fas fa-user-check"></i>{% trans 'Instructor Requests' %}</a>
+			</li>
+			{% endif %}
+
 			<li class="{% if request.path == ep %}active{% endif %}">
 				<a href="{% url 'edit_profile' %}"><i class="fas fa-cogs"></i>{% trans 'Account Setting' %}</a>
 			</li>

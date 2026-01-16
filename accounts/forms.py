@@ -2,11 +2,24 @@ from django import forms
 from django.db import transaction
 from django.contrib.auth.forms import (
     UserCreationForm,
+    UserCreationForm,
     UserChangeForm,
+    AuthenticationForm,
 )
+from django.contrib.auth import authenticate
 from django.contrib.auth.forms import PasswordResetForm
 from course.models import Program
-from .models import User, Student, Parent, RELATION_SHIP, LEVEL, GENDERS
+from .models import User, Student, Parent, RELATION_SHIP, LEVEL, GENDERS, InstructorRequest
+
+class UserLoginForm(AuthenticationForm):
+    def confirm_login_allowed(self, user):
+        if not user.is_active:
+            raise forms.ValidationError(
+                ("This account is inactive or pending approval. Please contact the administrator."),
+                code='inactive',
+            )
+        super().confirm_login_allowed(user)
+
 
 
 class StaffAddForm(UserCreationForm):
@@ -498,3 +511,30 @@ class ParentAddForm(UserCreationForm):
         )
         parent.save()
         return user
+
+
+class StudentRegisterForm(StudentAddForm):
+    class Meta(StudentAddForm.Meta):
+        model = User
+
+    @transaction.atomic()
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.is_approved = False  # Pending approval
+        user.is_active = False    # Disable login
+        if commit:
+            user.save()
+            Student.objects.create(
+                student=user,
+                level=self.cleaned_data.get("level"),
+                program=self.cleaned_data.get("program"),
+            )
+        return user
+
+class InstructorRequestForm(forms.ModelForm):
+    class Meta:
+        model = InstructorRequest
+        fields = ['reason']
+        widgets = {
+            'reason': forms.Textarea(attrs={'class': 'form-control', 'rows': 4, 'placeholder': 'Describe your qualifications and why you want to become an instructor...'}),
+        }

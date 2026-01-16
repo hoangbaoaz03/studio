@@ -22,7 +22,8 @@
 
 {% if request.user.is_superuser or request.user.is_lecturer %}
 <div class="manage-wrap">
-    <a class="btn btn-primary" href="{% url 'quiz_create' course.slug %}"><i class="fas fa-plus"></i>{% trans 'Add Quiz' %}</a>
+    <a class="btn btn-primary" href="{% url 'quiz_create' course.slug %}"><i class="fas fa-plus"></i> {% trans 'Add Quiz' %}</a>
+    <a class="btn btn-success ms-2" href="{% url 'quiz_import' course.slug %}"><i class="fas fa-file-word"></i> {% trans 'Import from Word' %}</a>
 </div>
 {% endif %}
 
@@ -56,9 +57,18 @@
                 {% if quiz.single_attempt %}
                 <p class="p-2 bg-light-warning small">{% trans "You will only get one attempt at this quiz" %}.</p>
                 {% endif %}
+                
+                <div class="mb-2">
+                    {% if quiz.time_limit > 0 %}
+                    <span class="badge bg-warning text-dark"><i class="fas fa-clock"></i> {{ quiz.time_limit }} min</span>
+                    {% endif %}
+                    {% if quiz.max_attempts > 0 %}
+                    <span class="badge bg-info"><i class="fas fa-redo"></i> {{ quiz.max_attempts }} attempts</span>
+                    {% endif %}
+                </div>
 
                 <div class="d-flex align-items-center">
-                    <a class="btn btn-block btn-secondary w-100" href="{% url 'quiz_take' pk=course.pk slug=quiz.slug %}">{% trans "Start quiz" %} &raquo;</a>
+                    <a class="btn btn-block btn-secondary w-100" href="{% url 'quiz_start' pk=course.pk slug=quiz.slug %}">{% trans "Start quiz" %} &raquo;</a>
 
                     {% if request.user.is_superuser or request.user.is_lecturer %}
                         <div class="dropup">

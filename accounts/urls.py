@@ -1,13 +1,5 @@
 from django.urls import path, include
-
-# from django.contrib.auth.views import (
-#     PasswordResetView,
-#     PasswordResetDoneView,
-#     PasswordResetConfirmView,
-#     PasswordResetCompleteView,
-#     LoginView,
-#     LogoutView,
-# )
+from django.contrib.auth import views as auth_views
 from .views import (
     profile,
     profile_single,
@@ -28,13 +20,29 @@ from .views import (
     register,
     render_lecturer_pdf_list,  # new
     render_student_pdf_list,  # new
+    pending_users,
+    approve_user,
+    reject_user,
+    apply_instructor,
+    manage_instructor_requests,
+    approve_instructor_request,
+    reject_instructor_request,
 )
+from .forms import UserLoginForm
 
 # from .forms import EmailValidationOnForgotPassword
 
 
 urlpatterns = [
-    path("", include("django.contrib.auth.urls")),
+    path(
+        "login/", 
+        auth_views.LoginView.as_view(
+            template_name="registration/login.html",
+            authentication_form=UserLoginForm
+        ), 
+        name='login'
+    ),
+    path("", include("django.contrib.auth.urls")), # Keep for other auth views (logout, password_reset, etc)
     path("admin_panel/", admin_panel, name="admin_panel"),
     path("profile/", profile, name="profile"),
     path("profile/<int:user_id>/detail/", profile_single, name="profile_single"),
@@ -63,6 +71,17 @@ urlpatterns = [
     path(
         "create_students_pdf_list/", render_student_pdf_list, name="student_list_pdf"
     ),  # new
+    
+    path("users/pending/", pending_users, name="pending_users"),
+    path("users/approve/<int:pk>/", approve_user, name="approve_user"),
+    path("users/reject/<int:pk>/", reject_user, name="reject_user"),
+
+    # Instructor Workflow
+    path("instructor/apply/", apply_instructor, name="apply_instructor"),
+    path("instructor/manage-requests/", manage_instructor_requests, name="manage_instructor_requests"),
+    path("instructor/approve/<int:pk>/", approve_instructor_request, name="approve_instructor_request"),
+    path("instructor/reject/<int:pk>/", reject_instructor_request, name="reject_instructor_request"),
+
     # path('add-student/', StudentAddView.as_view(), name='add_student'),
     # path('programs/course/delete/<int:pk>/', course_delete, name='delete_course'),
     # Setting urls

@@ -1,77 +1,40 @@
-from django.urls import path
-from . import views
+"""
+URL routing for Course API
+"""
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from . import views, course_wizard, video_service, player_api
 
+app_name = 'course'
+
+router = DefaultRouter()
+router.register(r'categories', views.CategoryViewSet, basename='category')
+router.register(r'subcategories', views.SubcategoryViewSet, basename='subcategory')
+router.register(r'courses', views.CourseViewSet, basename='course')
+router.register(r'sections', views.SectionViewSet, basename='section')
+router.register(r'lectures', views.LectureViewSet, basename='lecture')
 
 urlpatterns = [
-    # Program urls
-    path("", views.ProgramFilterView.as_view(), name="programs"),
-    path("<int:pk>/detail/", views.program_detail, name="program_detail"),
-    path("add/", views.program_add, name="add_program"),
-    path("<int:pk>/edit/", views.program_edit, name="edit_program"),
-    path("<int:pk>/delete/", views.program_delete, name="program_delete"),
-    # Course urls
-    path("course/<slug>/detail/", views.course_single, name="course_detail"),
-    path("<int:pk>/course/add/", views.course_add, name="course_add"),
-    path("course/<slug>/edit/", views.course_edit, name="edit_course"),
-    path("course/delete/<slug>/", views.course_delete, name="delete_course"),
-    # CourseAllocation urls
-    path(
-        "course/assign/",
-        views.CourseAllocationFormView.as_view(),
-        name="course_allocation",
-    ),
-    path(
-        "course/allocated/",
-        views.CourseAllocationFilterView.as_view(),
-        name="course_allocation_view",
-    ),
-    path(
-        "allocated_course/<int:pk>/edit/",
-        views.edit_allocated_course,
-        name="edit_allocated_course",
-    ),
-    path(
-        "course/<int:pk>/deallocate/", views.deallocate_course, name="course_deallocate"
-    ),
-    # File uploads urls
-    path(
-        "course/<slug>/documentations/upload/",
-        views.handle_file_upload,
-        name="upload_file_view",
-    ),
-    path(
-        "course/<slug>/documentations/<int:file_id>/edit/",
-        views.handle_file_edit,
-        name="upload_file_edit",
-    ),
-    path(
-        "course/<slug>/documentations/<int:file_id>/delete/",
-        views.handle_file_delete,
-        name="upload_file_delete",
-    ),
-    # Video uploads urls
-    path(
-        "course/<slug>/video_tutorials/upload/",
-        views.handle_video_upload,
-        name="upload_video",
-    ),
-    path(
-        "course/<slug>/video_tutorials/<video_slug>/detail/",
-        views.handle_video_single,
-        name="video_single",
-    ),
-    path(
-        "course/<slug>/video_tutorials/<video_slug>/edit/",
-        views.handle_video_edit,
-        name="upload_video_edit",
-    ),
-    path(
-        "course/<slug>/video_tutorials/<video_slug>/delete/",
-        views.handle_video_delete,
-        name="upload_video_delete",
-    ),
-    # course registration
-    path("course/registration/", views.course_registration, name="course_registration"),
-    path("course/drop/", views.course_drop, name="course_drop"),
-    path("my_courses/", views.user_course_list, name="user_course_list"),
+    path('', include(router.urls)),
+    
+    # Course creation wizard
+    path('wizard/create/', course_wizard.create_course_step1, name='wizard-create'),
+    path('wizard/<int:course_id>/details/', course_wizard.update_course_details, name='wizard-details'),
+    path('wizard/<int:course_id>/section/', course_wizard.add_course_section, name='wizard-section'),
+    path('wizard/section/<int:section_id>/lecture/', course_wizard.add_lecture, name='wizard-lecture'),
+    path('wizard/<int:course_id>/pricing/', course_wizard.update_course_pricing, name='wizard-pricing'),
+    path('wizard/<int:course_id>/publish/', course_wizard.publish_course, name='wizard-publish'),
+    
+    # Video upload
+    path('video/upload-url/', video_service.generate_upload_url, name='video-upload-url'),
+    path('video/attach/', video_service.attach_video_to_lecture, name='video-attach'),
+    path('video/upload-local/', video_service.upload_video_local, name='video-upload-local'),
+    path('video/delete/<int:lecture_id>/', video_service.delete_video, name='video-delete'),
+    
+    # Video player
+    path('player/lecture/<int:lecture_id>/stream/', player_api.get_video_stream_url, name='player-stream'),
+    path('player/lecture/<int:lecture_id>/progress/', player_api.update_playback_progress, name='player-progress'),
+    path('player/lecture/<int:lecture_id>/next/', player_api.get_next_lecture, name='player-next'),
+    path('player/lecture/<int:lecture_id>/resources/', player_api.get_lecture_resources, name='player-resources'),
+    path('player/lecture/<int:lecture_id>/subtitles/', player_api.get_video_subtitles, name='player-subtitles'),
 ]

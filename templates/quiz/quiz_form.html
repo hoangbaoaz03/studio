@@ -57,7 +57,12 @@
                         {{ form.random_order|as_crispy_field }}                    
                         {{ form.answers_at_end|as_crispy_field }}                    
                         {{ form.exam_paper|as_crispy_field }}                    
-                        {{ form.single_attempt|as_crispy_field }}                    
+                        {{ form.single_attempt|as_crispy_field }}
+                        {{ form.time_limit|as_crispy_field }}
+                        {{ form.max_attempts|as_crispy_field }}
+                        {{ form.allow_backtracking|as_crispy_field }}
+                        {{ form.start_date|as_crispy_field }}
+                        {{ form.end_date|as_crispy_field }}                    
                         {{ form.draft|as_crispy_field }}             
                     </div>
                 </div>

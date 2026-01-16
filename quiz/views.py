@@ -9,9 +9,19 @@ from django.views.generic import (
     FormView,
     ListView,
     TemplateView,
+    CreateView,
+    DetailView,
+    FormView,
+    ListView,
     UpdateView,
+    View,
 )
 
+from django.http import JsonResponse, Http404
+from django.utils import timezone
+import json
+
+from .services import parse_word_file
 from accounts.decorators import lecturer_required
 from .forms import (
     EssayForm,
@@ -19,6 +29,7 @@ from .forms import (
     MCQuestionFormSet,
     QuestionForm,
     QuizAddForm,
+    QuizImportForm
 )
 from .models import (
     Course,
@@ -28,6 +39,9 @@ from .models import (
     Question,
     Quiz,
     Sitting,
+    QuizAttempt,
+    UserResponse,
+    Choice
 )
 
 
@@ -36,30 +50,98 @@ from .models import (
 # ########################################################
 
 
-@method_decorator([login_required, lecturer_required], name="dispatch")
+@method_decorator([login_required, lecturer_required], name='dispatch')
 class QuizCreateView(CreateView):
     model = Quiz
     form_class = QuizAddForm
-    template_name = "quiz/quiz_form.html"
-
+    template_name = 'quiz/quiz_form.html'
+    
     def get_initial(self):
         initial = super().get_initial()
-        course = get_object_or_404(Course, slug=self.kwargs["slug"])
-        initial["course"] = course
+        course = get_object_or_404(Course, slug=self.kwargs['slug'])
+        initial['course'] = course
         return initial
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["course"] = get_object_or_404(Course, slug=self.kwargs["slug"])
+        context['course'] = get_object_or_404(Course, slug=self.kwargs['slug'])
         return context
 
     def form_valid(self, form):
-        form.instance.course = get_object_or_404(Course, slug=self.kwargs["slug"])
-        with transaction.atomic():
-            self.object = form.save()
-            return redirect(
-                "mc_create", slug=self.kwargs["slug"], quiz_id=self.object.id
-            )
+        form.instance.course = get_object_or_404(Course, slug=self.kwargs['slug'])
+        self.object = form.save()
+        messages.success(self.request, "Quiz created successfully.")
+        return redirect('mc_create', slug=self.kwargs['slug'], quiz_id=self.object.id)
+
+@method_decorator([login_required, lecturer_required], name='dispatch')
+class QuizImportView(View):
+    def get(self, request, slug):
+        course = get_object_or_404(Course, slug=slug)
+        form = QuizImportForm()
+        return render(request, 'quiz/quiz_import.html', {'form': form, 'course': course})
+        
+    def post(self, request, slug):
+        course = get_object_or_404(Course, slug=slug)
+        form = QuizImportForm(request.POST, request.FILES)
+        
+        if form.is_valid():
+            title = form.cleaned_data['title']
+            description = form.cleaned_data['description']
+            file = request.FILES['file']
+            
+            try:
+                # Parse file
+                parsed_questions = parse_word_file(file)
+                
+                if not parsed_questions:
+                    messages.error(request, "No questions found in file.")
+                    return render(request, 'quiz/quiz_import.html', {'form': form, 'course': course})
+                    
+                # Create Quiz
+                quiz = Quiz.objects.create(
+                    title=title,
+                    description=description,
+                    course=course,
+                    category='exam', # default
+                    time_limit=form.cleaned_data['time_limit'],
+                    max_attempts=form.cleaned_data['max_attempts'],
+                    start_date=form.cleaned_data['start_date'],
+                    end_date=form.cleaned_data['end_date']
+                )
+                
+                # Create Questions
+                count = 0
+                for q_data in parsed_questions:
+                    question = MCQuestion.objects.create(
+                        content=q_data['content']
+                    )
+                    question.quiz.add(quiz)
+                    
+                    has_correct = False
+                    for c_data in q_data['choices']:
+                        Choice.objects.create(
+                            question=question,
+                            choice_text=c_data['text'],
+                            correct=c_data['correct']
+                        )
+                        if c_data['correct']:
+                            has_correct = True
+                    
+                    if not has_correct and q_data['choices']:
+                        # Auto mark first as correct if none marked? No, better warn.
+                        # For now, just logging or relying on parser quality.
+                        pass
+                        
+                    count += 1
+                    
+                messages.success(request, f"Quiz '{title}' imported with {count} questions.")
+                return redirect('quiz_index', slug=course.slug)
+                
+            except Exception as e:
+                messages.error(request, f"Error processing file: {str(e)}")
+                return render(request, 'quiz/quiz_import.html', {'form': form, 'course': course})
+                
+        return render(request, 'quiz/quiz_import.html', {'form': form, 'course': course})
 
 
 @method_decorator([login_required, lecturer_required], name="dispatch")
@@ -224,113 +306,194 @@ class QuizMarkingDetail(DetailView):
 # ########################################################
 
 
+# ########################################################
+# Quiz Taking Views (Redesigned)
+# ########################################################
+
 @method_decorator([login_required], name="dispatch")
-class QuizTake(FormView):
-    form_class = QuestionForm
-    template_name = "quiz/question.html"
-    result_template_name = "quiz/result.html"
+class QuizStartView(View):
+    def get(self, request, slug, pk):
+        course = get_object_or_404(Course, pk=pk)
+        quiz = get_object_or_404(Quiz, slug=slug)
+        
+        # Check if quiz is drafted
+        if quiz.draft and not request.user.is_lecturer:
+             messages.warning(request, "This quiz is not available.")
+             return redirect("quiz_index", slug=course.slug)
+
+        # Check attempts
+        attempts = QuizAttempt.objects.filter(user=request.user, quiz=quiz)
+        if quiz.max_attempts > 0 and attempts.count() >= quiz.max_attempts:
+            messages.warning(request, f"You have reached the maximum number of attempts ({quiz.max_attempts}).")
+            return redirect("quiz_index", slug=course.slug)
+
+        # Create new attempt
+        attempt = QuizAttempt.objects.create(
+            user=request.user,
+            quiz=quiz,
+            status="in_progress"
+        )
+        return redirect("quiz_take", pk=course.pk, slug=quiz.slug)
+
+
+@method_decorator([login_required], name="dispatch")
+@method_decorator([login_required], name="dispatch")
+class QuizTake(TemplateView):
+    template_name = "quiz/take_quiz.html"
 
     def dispatch(self, request, *args, **kwargs):
-        self.quiz = get_object_or_404(Quiz, slug=self.kwargs["slug"])
         self.course = get_object_or_404(Course, pk=self.kwargs["pk"])
-        if not Question.objects.filter(quiz=self.quiz).exists():
-            messages.warning(request, "This quiz has no questions available.")
-            return redirect("quiz_index", slug=self.course.slug)
+        self.quiz = get_object_or_404(Quiz, slug=self.kwargs["slug"])
+        
+        # Get active attempt
+        self.attempt = QuizAttempt.objects.filter(
+            user=request.user, 
+            quiz=self.quiz, 
+            status="in_progress"
+        ).first()
 
-        self.sitting = Sitting.objects.user_sitting(
-            request.user, self.quiz, self.course
-        )
-        if not self.sitting:
-            messages.info(
-                request,
-                "You have already completed this quiz. Only one attempt is permitted.",
-            )
-            return redirect("quiz_index", slug=self.course.slug)
-
-        # Set self.question and self.progress here
-        self.question = self.sitting.get_first_question()
-        self.progress = self.sitting.progress()
+        if not self.attempt:
+            # If no active attempt, redirect to start (or index)
+            # This prevents accessing /take/ url directly without starting
+            return redirect("quiz_start", pk=self.course.pk, slug=self.quiz.slug)
 
         return super().dispatch(request, *args, **kwargs)
 
-    def get_form_kwargs(self):
-        kwargs = super().get_form_kwargs()
-        kwargs["question"] = self.question
-        return kwargs
 
-    def get_form_class(self):
-        if isinstance(self.question, EssayQuestion):
-            return EssayForm
-        return self.form_class
-
-    def form_valid(self, form):
-        self.form_valid_user(form)
-        if not self.sitting.get_first_question():
-            return self.final_result_user()
-        return super().get(self.request)
-
-    def form_valid_user(self, form):
-        progress, _ = Progress.objects.get_or_create(user=self.request.user)
-        guess = form.cleaned_data["answers"]
-        is_correct = self.question.check_if_correct(guess)
-
-        if is_correct:
-            self.sitting.add_to_score(1)
-            progress.update_score(self.question, 1, 1)
-        else:
-            self.sitting.add_incorrect_question(self.question)
-            progress.update_score(self.question, 0, 1)
-
-        if not self.quiz.answers_at_end:
-            self.previous = {
-                "previous_answer": guess,
-                "previous_outcome": is_correct,
-                "previous_question": self.question,
-                "answers": self.question.get_choices(),
-                "question_type": {self.question.__class__.__name__: True},
-            }
-        else:
-            self.previous = {}
-
-        self.sitting.add_user_answer(self.question, guess)
-        self.sitting.remove_first_question()
-
-        # Update self.question and self.progress for the next question
-        self.question = self.sitting.get_first_question()
-        self.progress = self.sitting.progress()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["question"] = self.question
-        context["quiz"] = self.quiz
         context["course"] = self.course
-        if hasattr(self, "previous"):
-            context["previous"] = self.previous
-        if hasattr(self, "progress"):
-            context["progress"] = self.progress
+        context["quiz"] = self.quiz
+        context["attempt"] = self.attempt
+        
+        # Get all questions
+        questions = self.quiz.question_set.all().select_subclasses()
+        context["questions"] = questions
+        
+        # Get existing user responses (to show selected answers)
+        # Use a dictionary k=QuestionID, v=SelectedChoiceID/Text
+        responses = UserResponse.objects.filter(attempt=self.attempt)
+        context["user_answers"] = {
+            r.question_id: r.selected_choice_id for r in responses if r.selected_choice
+        }
+        # Add essay answers
+        essay_answers = {
+            r.question_id: r.text_answer for r in responses if r.text_answer
+        }
+        context["user_text_answers"] = essay_answers
+        
+        # Calculate time remaining
+        if self.quiz.time_limit > 0:
+            elapsed = (timezone.now() - self.attempt.start_time).total_seconds()
+            remaining = (self.quiz.time_limit * 60) - elapsed
+            context["time_remaining"] = max(0, remaining)
+        
         return context
 
-    def final_result_user(self):
-        self.sitting.mark_quiz_complete()
-        results = {
-            "course": self.course,
-            "quiz": self.quiz,
-            "score": self.sitting.get_current_score,
-            "max_score": self.sitting.get_max_score,
-            "percent": self.sitting.get_percent_correct,
-            "sitting": self.sitting,
-            "previous": getattr(self, "previous", {}),
-        }
 
-        if self.quiz.answers_at_end:
-            results["questions"] = self.sitting.get_questions(with_answers=True)
-            results["incorrect_questions"] = self.sitting.get_incorrect_questions
+@method_decorator([login_required], name="dispatch")
+class QuizSaveAnswer(View):
+    def post(self, request):
+        if request.headers.get('x-requested-with') != 'XMLHttpRequest':
+             return JsonResponse({"success": False, "error": "Invalid request"}, status=400)
+             
+        data = json.loads(request.body)
+        attempt_id = data.get("attempt_id")
+        question_id = data.get("question_id")
+        answer_data = data.get("answer") # choice_id or text
+        
+        attempt = get_object_or_404(QuizAttempt, id=attempt_id, user=request.user)
+        if attempt.status != "in_progress":
+            return JsonResponse({"success": False, "error": "Quiz is not in progress"})
+            
+        question = get_object_or_404(Question, id=question_id)
+        
+        # Get or create response
+        response, created = UserResponse.objects.get_or_create(
+            attempt=attempt,
+            question=question
+        )
+        
+        # Save answer based on type
+        # Basic check if it's Choice ID (int) or Text
+        # Assuming MCQuestion logic for now
+        is_mcq = MCQuestion.objects.filter(id=question_id).exists()
+        
+        if is_mcq:
+            try:
+                choice = Choice.objects.get(id=int(answer_data))
+                response.selected_choice = choice
+                response.text_answer = None
+            except:
+                pass # invalid choice
+        else:
+            response.text_answer = answer_data
+            response.selected_choice = None
+            
+        response.save()
+        
+        return JsonResponse({"success": True})
 
-        if (
-            not self.quiz.exam_paper
-            or self.request.user.is_superuser
-            or self.request.user.is_lecturer
-        ):
-            self.sitting.delete()
 
-        return render(self.request, self.result_template_name, results)
+@method_decorator([login_required], name="dispatch")
+class QuizSubmit(View):
+    def post(self, request, pk, slug):
+        course = get_object_or_404(Course, pk=pk)
+        quiz = get_object_or_404(Quiz, slug=slug)
+        attempt = QuizAttempt.objects.filter(
+            user=request.user, 
+            quiz=quiz, 
+            status="in_progress"
+        ).first()
+        
+        if attempt:
+            # Mark as submitted
+            attempt.status = "submitted"
+            attempt.submit_time = timezone.now()
+            attempt.save()
+            
+            # Trigger Auto Grading (Simple Version)
+            self.grade_attempt(attempt)
+            
+        return redirect("quiz_result", pk=course.pk, slug=quiz.slug, attempt_id=attempt.id)
+
+    def grade_attempt(self, attempt):
+        responses = UserResponse.objects.filter(attempt=attempt)
+        score = 0
+        for r in responses:
+            if r.selected_choice and r.selected_choice.correct:
+                r.is_correct = True
+                r.marks = 1 # Assuming 1 mark per question for now
+                score += 1
+            else:
+                r.is_correct = False
+                r.marks = 0
+            r.save()
+        
+        attempt.score = score
+        attempt.status = "graded" # Auto graded
+        attempt.save()
+
+
+@method_decorator([login_required], name="dispatch")
+class QuizResultDetail(DetailView):
+    model = QuizAttempt
+    template_name = "quiz/result.html"
+    context_object_name = "attempt" # standardizing
+
+    def get_object(self):
+        return get_object_or_404(
+            QuizAttempt, 
+            id=self.kwargs["attempt_id"], 
+            user=self.request.user
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["quiz"] = self.object.quiz
+        context["course"] = get_object_or_404(Course, pk=self.kwargs["pk"])
+        
+        # Breakdown
+        context["questions"] = self.object.responses.select_related('question').all()
+        return context

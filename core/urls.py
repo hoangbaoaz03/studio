@@ -1,35 +1,23 @@
+"""
+URL routing for homepage and discovery
+"""
 from django.urls import path
+from . import homepage_api, recommendations
 
-from .views import (
-    home_view,
-    post_add,
-    edit_post,
-    delete_post,
-    session_list_view,
-    session_add_view,
-    session_update_view,
-    session_delete_view,
-    semester_list_view,
-    semester_add_view,
-    semester_update_view,
-    semester_delete_view,
-    dashboard_view,
-)
-
+app_name = 'core'
 
 urlpatterns = [
-    # Accounts url
-    path("", home_view, name="home"),
-    path("add_item/", post_add, name="add_item"),
-    path("item/<int:pk>/edit/", edit_post, name="edit_post"),
-    path("item/<int:pk>/delete/", delete_post, name="delete_post"),
-    path("session/", session_list_view, name="session_list"),
-    path("session/add/", session_add_view, name="add_session"),
-    path("session/<int:pk>/edit/", session_update_view, name="edit_session"),
-    path("session/<int:pk>/delete/", session_delete_view, name="delete_session"),
-    path("semester/", semester_list_view, name="semester_list"),
-    path("semester/add/", semester_add_view, name="add_semester"),
-    path("semester/<int:pk>/edit/", semester_update_view, name="edit_semester"),
-    path("semester/<int:pk>/delete/", semester_delete_view, name="delete_semester"),
-    path("dashboard/", dashboard_view, name="dashboard"),
+    path('homepage/', homepage_api.homepage_data, name='homepage'),
+    path('search/', homepage_api.search_courses, name='search'),
+    path('category/<slug:slug>/', homepage_api.category_courses, name='category-courses'),
+    path('instructor/<int:instructor_id>/', homepage_api.instructor_profile, name='instructor-profile'),
+    path('trending/', homepage_api.trending_courses, name='trending'),
+    
+    # Recommendations
+    path('recommendations/for-you/', recommendations.recommended_for_you, name='recommended-for-you'),
+    path('recommendations/similar/<int:course_id>/', recommendations.similar_courses, name='similar-courses'),
+    path('recommendations/also-bought/<int:course_id>/', recommendations.students_also_bought, name='also-bought'),
+    path('recommendations/top-rated/<int:category_id>/', recommendations.top_rated_in_category, name='top-rated-category'),
+    path('recommendations/because-viewed/<int:course_id>/', recommendations.because_you_viewed, name='because-viewed'),
+    path('recommendations/homepage/', recommendations.personalized_homepage, name='personalized-homepage'),
 ]

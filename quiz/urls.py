@@ -11,8 +11,13 @@ urlpatterns = [
         view=views.QuizMarkingDetail.as_view(),
         name="quiz_marking_detail",
     ),
+    path("<int:pk>/<slug>/start/", view=views.QuizStartView.as_view(), name="quiz_start"),
     path("<int:pk>/<slug>/take/", view=views.QuizTake.as_view(), name="quiz_take"),
+    path("<int:pk>/<slug>/submit/", view=views.QuizSubmit.as_view(), name="quiz_submit"),
+    path("<int:pk>/<slug>/result/<int:attempt_id>/", view=views.QuizResultDetail.as_view(), name="quiz_result"),
+    path("save_answer/", view=views.QuizSaveAnswer.as_view(), name="quiz_save_answer"),
     path("<slug>/quiz_add/", views.QuizCreateView.as_view(), name="quiz_create"),
+    path("<slug>/quiz_import/", views.QuizImportView.as_view(), name="quiz_import"),
     path("<slug>/<int:pk>/add/", views.QuizUpdateView.as_view(), name="quiz_update"),
     path("<slug>/<int:pk>/delete/", views.quiz_delete, name="quiz_delete"),
     path(

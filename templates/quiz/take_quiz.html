@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% load static %}
+
+{% block title %} {{ quiz.title }} | {% trans 'Quiz' %} {% endblock %}
+
+{% block content %}
+<div class="container-fluid" id="quiz-app">
+    <!-- Header: Title & Timer -->
+    <div class="row mb-4 align-items-center">
+        <div class="col-md-8">
+            <h2 class="text-primary">{{ quiz.title }}</h2>
+            <p class="text-muted">{{ course.title }}</p>
+        </div>
+        <div class="col-md-4 text-end">
+             {% if time_remaining %}
+            <div class="card bg-light border-warning">
+                <div class="card-body py-2">
+                    <h5 class="card-title m-0 text-danger">
+                        <i class="fas fa-clock"></i> <span id="timer-display">--:--</span>
+                    </h5>
+                    <small>{% trans "Time Remaining" %}</small>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Question Area -->
+        <div class="col-md-9">
+            <div class="card shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between">
+                    <span class="fw-bold">{% trans "Question" %} <span id="current-q-num">1</span> / {{ questions|length }}</span>
+                    <span class="badge bg-info" id="q-type-badge">MCQ</span>
+                </div>
+                <div class="card-body p-5">
+                    
+                    <!-- Loop through all questions (Hidden by default) -->
+                    {% for q in questions %}
+                    <div class="question-block" id="q-block-{{ forloop.counter0 }}" data-qid="{{ q.id }}" style="display: none;">
+                        <h4 class="mb-4">{{ q.content }}</h4>
+                        {% if q.figure %}
+                            <img src="{{ q.figure.url }}" class="img-fluid mb-4 rounded" style="max-height: 300px;">
+                        {% endif %}
+
+                        <div class="answers-area">
+                            {% if q.get_choices_list %}
+                                <!-- MCQ -->
+                                <div class="list-group">
+                                {% for choice_id, choice_text in q.get_choices_list %}
+                                    <label class="list-group-item list-group-item-action p-3">
+                                        <input class="form-check-input me-2 answer-input" type="radio" 
+                                            name="question_{{ q.id }}" 
+                                            value="{{ choice_id }}"
+                                            data-qid="{{ q.id }}"
+                                            onchange="saveAnswer({{ q.id }}, '{{ choice_id }}')"
+                                        >
+                                        {{ choice_text }}
+                                    </label>
+                                {% endfor %}
+                                </div>
+                            {% else %}
+                                <!-- Essay / Text -->
+                                <textarea class="form-control answer-input" rows="5" 
+                                    name="question_{{ q.id }}"
+                                    data-qid="{{ q.id }}"
+                                    data-type="text"
+                                    onblur="saveAnswer({{ q.id }}, this.value)"
+                                ></textarea>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                </div>
+                <div class="card-footer bg-white d-flex justify-content-between p-3">
+                    <button class="btn btn-outline-secondary" onclick="prevQuestion()" id="btn-prev">
+                        <i class="fas fa-chevron-left"></i> {% trans "Previous" %}
+                    </button>
+                    <button class="btn btn-primary" onclick="nextQuestion()" id="btn-next">
+                         {% trans "Next" %} <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation Palette -->
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-header">{% trans "Question Palette" %}</div>
+                <div class="card-body">
+                    <div class="d-flex flex-wrap gap-2 justify-content-center">
+                        {% for q in questions %}
+                        <button class="btn btn-outline-secondary btn-sm nav-btn" 
+                            id="nav-btn-{{ forloop.counter0 }}"
+                            onclick="jumpToQuestion({{ forloop.counter0 }})"
+                            style="width: 40px; height: 40px;">
+                            {{ forloop.counter }}
+                        </button>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="card-footer">
+                     <form action="{% url 'quiz_submit' pk=course.pk slug=quiz.slug %}" method="POST" id="submit-form">
+                        {% csrf_token %}
+                        <button type="button" class="btn btn-success w-100 py-2" onclick="confirmSubmit()">
+                            <i class="fas fa-check-circle"></i> {% trans "Submit Quiz" %}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block js %}
+<script>
+    // State
+    let currentIndex = 0;
+    const totalQuestions = {{ questions|length }};
+    const attemptId = {{ attempt.id }};
+    const timeLimitSeconds = {{ time_remaining|default:"0" }};
+    
+    // User Answers (Server Side Injection)
+    const userAnswers = {
+        // format: qid: val
+        {% for qid, val in user_answers.items %}
+            {{ qid }}: "{{ val }}",
+        {% endfor %}
+        {% for qid, val in user_text_answers.items %}
+            {{ qid }}: "{{ val|escapejs }}",
+        {% endfor %}
+    };
+
+    // Init
+    document.addEventListener('DOMContentLoaded', function() {
+        showQuestion(0);
+        restoreAnswers();
+        if (timeLimitSeconds > 0) {
+            startTimer(timeLimitSeconds);
+        }
+    });
+
+    function restoreAnswers() {
+        for (const [qid, val] of Object.entries(userAnswers)) {
+            // Try radio
+            const radio = document.querySelector(`input[name="question_${qid}"][value="${val}"]`);
+            if (radio) {
+                radio.checked = true;
+                markNavAnswered(getQuestionIndexById(qid));
+            }
+            // Try textarea
+            const text = document.querySelector(`textarea[name="question_${qid}"]`);
+            if (text) {
+                text.value = val;
+                if(val.trim()) markNavAnswered(getQuestionIndexById(qid));
+            }
+        }
+    }
+    
+    function getQuestionIndexById(qid) {
+        // Simple lookup from DOM
+        const block = document.querySelector(`.question-block[data-qid="${qid}"]`);
+        if (block) {
+            return parseInt(block.id.replace('q-block-', ''));
+        }
+        return -1;
+    }
+
+    function showQuestion(index) {
+        // Hide all
+        document.querySelectorAll('.question-block').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('btn-primary'));
+        
+        // Show current
+        const currentBlock = document.getElementById(`q-block-${index}`);
+        if(currentBlock) {
+             currentBlock.style.display = 'block';
+             currentIndex = index;
+             
+             // Update UI
+             document.getElementById('current-q-num').innerText = index + 1;
+             
+             // Update Nav Button Active State
+             const navBtn = document.getElementById(`nav-btn-${index}`);
+             if(navBtn) navBtn.classList.add('btn-primary');
+             
+             // Buttons
+             document.getElementById('btn-prev').disabled = index === 0;
+             document.getElementById('btn-next').innerText = (index === totalQuestions - 1) ? "{% trans 'Finish' %}" : "{% trans 'Next' %} >";
+        }
+    }
+    
+    function jumpToQuestion(index) {
+        showQuestion(index);
+    }
+    
+    function nextQuestion() {
+        if (currentIndex < totalQuestions - 1) {
+            showQuestion(currentIndex + 1);
+        } else {
+            // Scroll to submit
+             confirmSubmit();
+        }
+    }
+    
+    function prevQuestion() {
+        if (currentIndex > 0) {
+            showQuestion(currentIndex - 1);
+        }
+    }
+    
+    function markNavAnswered(index) {
+        const btn = document.getElementById(`nav-btn-${index}`);
+        if(btn) {
+            btn.classList.add('btn-success');
+            btn.classList.remove('btn-outline-secondary');
+            // Keep btn-primary if active
+        }
+    }
+
+    function saveAnswer(questionId, value) {
+        if(!value) return;
+        
+        // Mark UI as answered
+        markNavAnswered(currentIndex);
+
+        // AJAX Save
+        fetch("{% url 'quiz_save_answer' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                attempt_id: attemptId,
+                question_id: questionId,
+                answer: value
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if(!data.success) {
+                console.error("Save failed", data);
+            }
+        })
+        .catch(err => console.error("Error", err));
+    }
+    
+    function confirmSubmit() {
+        if(confirm("{% trans 'Are you sure you want to submit your quiz?' %}")) {
+            document.getElementById('submit-form').submit();
+        }
+    }
+    
+    // Timer Logic
+    let timerInterval;
+    function startTimer(duration) {
+        let timer = duration, minutes, seconds;
+        const display = document.querySelector('#timer-display');
+        
+        timerInterval = setInterval(function () {
+            minutes = parseInt(timer / 60, 10);
+            seconds = parseInt(timer % 60, 10);
+
+            minutes = minutes < 10 ? "0" + minutes : minutes;
+            seconds = seconds < 10 ? "0" + seconds : seconds;
+
+            display.textContent = minutes + ":" + seconds;
+
+            if (--timer < 0) {
+                clearInterval(timerInterval);
+                alert("Time is up! Submitting quiz...");
+                document.getElementById('submit-form').submit();
+            }
+        }, 1000);
+    }
+
+</script>
+{% endblock js %}

@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-8 mx-auto text-center mt-5">
+            <div class="card shadow">
+                <div class="card-body">
+                    <i class="fas fa-clock fa-4x text-warning mb-3"></i>
+                    <h2 class="card-title">{% trans 'Application Pending' %}</h2>
+                    <p class="lead">
+                        {% trans 'You have already applied to become an instructor. Your application is currently under review.' %}
+                    </p>
+                    <p class="text-muted">
+                        {% trans 'Status:' %} <strong>{{ request.status|title }}</strong><br>
+                        {% trans 'Submitted on:' %} {{ request.created_at|date:"F d, Y" }}
+                    </p>
+                    <a href="{% url 'dashboard' %}" class="btn btn-primary mt-3">{% trans 'Return to Dashboard' %}</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

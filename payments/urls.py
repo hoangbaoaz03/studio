@@ -1,16 +1,19 @@
+"""
+URL routing for Payment API
+"""
 from django.urls import path
-from . import views
+from . import stripe_api
+
+app_name = 'payments'
 
 urlpatterns = [
-    path("", views.PaymentGetwaysView.as_view(), name="payment_gateways"),
-    path("paypal/", views.payment_paypal, name="paypal"),
-    path("stripe/", views.payment_stripe, name="stripe"),
-    path("coinbase/", views.payment_coinbase, name="coinbase"),
-    path("paylike/", views.payment_paylike, name="paylike"),
-    path("stripe-charge/", views.stripe_charge, name="stripe_charge"),
-    path("gopay-charge/", views.gopay_charge, name="gopay_charge"),
-    path("payment-succeed/", views.payment_succeed, name="payment-succeed"),
-    path("complete/", views.paymentComplete, name="complete"),
-    path("create-invoice/", views.create_invoice, name="create_invoice"),
-    path("invoice-detail/<int:id>/", views.invoice_detail, name="invoice_detail"),
+    # Stripe checkout
+    path('checkout/', stripe_api.create_checkout_session, name='checkout'),
+    path('webhook/', stripe_api.stripe_webhook, name='stripe-webhook'),
+    
+    # Coupons
+    path('coupon/apply/', stripe_api.apply_coupon, name='apply-coupon'),
+    
+    # Purchase history
+    path('history/', stripe_api.purchase_history, name='purchase-history'),
 ]

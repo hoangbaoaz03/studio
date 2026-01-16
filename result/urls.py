@@ -1,21 +1,27 @@
-from django.urls import path
-from .views import (
-    add_score,
-    add_score_for,
-    grade_result,
-    assessment_result,
-    course_registration_form,
-    result_sheet_pdf_view,
-)
+"""
+URL routing for Enrollment and Review API
+"""
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from . import views, student_api
 
+app_name = 'result'
+
+router = DefaultRouter()
+router.register(r'enrollments', views.EnrollmentViewSet, basename='enrollment')
+router.register(r'reviews', views.ReviewViewSet, basename='review')
+router.register(r'questions', views.QuestionViewSet, basename='question')
+router.register(r'answers', views.AnswerViewSet, basename='answer')
+router.register(r'wishlist', views.WishlistViewSet, basename='wishlist')
 
 urlpatterns = [
-    path("manage-score/", add_score, name="add_score"),
-    path("manage-score/<int:id>/", add_score_for, name="add_score_for"),
-    path("grade/", grade_result, name="grade_results"),
-    path("assessment/", assessment_result, name="ass_results"),
-    path("result/print/<int:id>/", result_sheet_pdf_view, name="result_sheet_pdf_view"),
-    path(
-        "registration/form/", course_registration_form, name="course_registration_form"
-    ),
+    path('', include(router.urls)),
+    
+    # Student dashboard
+    path('my-learning/', student_api.my_learning, name='my-learning'),
+    path('my-stats/', student_api.my_progress_stats, name='my-stats'),
+    path('my-certificates/', student_api.my_certificates, name='my-certificates'),
+    path('my-wishlist/', student_api.my_wishlist, name='my-wishlist'),
+    path('player/<slug:course_slug>/', student_api.course_player_data, name='course-player'),
+    path('certificate/<int:enrollment_id>/generate/', student_api.generate_certificate, name='generate-certificate'),
 ]

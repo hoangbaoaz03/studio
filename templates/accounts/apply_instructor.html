@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% load i18n crispy_forms_tags %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-8 mx-auto">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="card-title">{% trans 'Become an Instructor' %}</h4>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        {% trans 'Share your knowledge with millions of students. Join our vibrant community of instructors.' %}
+                    </p>
+                    
+                    <form method="post">
+                        {% csrf_token %}
+                        {{ form|crispy }}
+                        <div class="mt-4">
+                            <button type="submit" class="btn btn-primary btn-lg">{% trans 'Submit Application' %}</button>
+                            <a href="{% url 'dashboard' %}" class="btn btn-secondary btn-lg">{% trans 'Cancel' %}</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
