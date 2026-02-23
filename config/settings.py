@@ -38,6 +38,7 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt",
     "corsheaders",
     "drf_spectacular",
+    "mptt",
     
     # Forms & Filters
     "crispy_forms",
@@ -60,6 +61,11 @@ PROJECT_APPS = [
     "course.apps.CourseConfig",
     "result.apps.ResultConfig",
     "payments.apps.PaymentsConfig",
+    "certification.apps.CertificationConfig",
+    "organization.apps.OrganizationConfig",
+    "admin_portal.apps.AdminPortalConfig",
+    "reports",
+    "analytics",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + PROJECT_APPS
@@ -74,6 +80,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "allauth.account.middleware.AccountMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -250,6 +257,15 @@ SESSION_CACHE_ALIAS = "default"
 STRIPE_SECRET_KEY = config("STRIPE_SECRET_KEY", default="")
 STRIPE_PUBLISHABLE_KEY = config("STRIPE_PUBLISHABLE_KEY", default="")
 STRIPE_WEBHOOK_SECRET = config("STRIPE_WEBHOOK_SECRET", default="")
+
+# MoMo Payment Configuration
+USE_MOCK_MOMO = config("USE_MOCK_MOMO", default=False, cast=bool)
+MOMO_PARTNER_CODE = config("MOMO_PARTNER_CODE", default="")
+MOMO_ACCESS_KEY = config("MOMO_ACCESS_KEY", default="")
+MOMO_SECRET_KEY = config("MOMO_SECRET_KEY", default="")
+MOMO_ENDPOINT = config("MOMO_ENDPOINT", default="https://test-payment.momo.vn/v2/gateway/api/create")
+MOMO_RETURN_URL = config("MOMO_RETURN_URL", default="http://localhost:3000/checkout/success")
+MOMO_NOTIFY_URL = config("MOMO_NOTIFY_URL", default="http://localhost:8000/api/payments/momo/webhook/")
 
 # Platform settings
 PLATFORM_FEE_PERCENT = config("PLATFORM_FEE_PERCENT", default=15.0, cast=float)

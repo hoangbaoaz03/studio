@@ -115,7 +115,11 @@ class InstructorProfile(models.Model):
     
     def update_stats(self):
         """Recalculate instructor statistics"""
-        from courses.models import Course, Enrollment, Review
+        from django.apps import apps
+        
+        Course = apps.get_model('course', 'Course')
+        Enrollment = apps.get_model('result', 'Enrollment')
+        Review = apps.get_model('result', 'Review')
         
         # Total courses
         self.total_courses = Course.objects.filter(

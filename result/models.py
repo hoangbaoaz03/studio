@@ -59,7 +59,7 @@ class Enrollment(models.Model):
     
     # Certificate
     certificate_issued = models.BooleanField(default=False)
-    certificate_number = models.CharField(max_length=100, blank=True, unique=True)
+    certificate_number = models.CharField(max_length=100, blank=True, null=True, unique=True)
     
     class Meta:
         ordering = ['-enrolled_at']
@@ -339,9 +339,38 @@ class Wishlist(models.Model):
     )
     added_at = models.DateTimeField(auto_now_add=True)
     
-    class Meta:
-        unique_together = ['user', 'course']
-        ordering = ['-added_at']
-    
     def __str__(self):
         return f"{self.user.username} → {self.course.title}"
+
+
+class Note(models.Model):
+    """
+    User notes taken during video playback
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='notes'
+    )
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name='notes'
+    )
+    content = models.TextField()
+    timestamp = models.IntegerField(
+        help_text=_("Timestamp in seconds where note was taken")
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['timestamp']
+        indexes = [
+            models.Index(fields=['lecture', 'timestamp']),
+        ]
+        
+    def __str__(self):
+        return f"Note by {self.user.username} at {self.timestamp}s"
+

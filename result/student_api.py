@@ -8,8 +8,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Avg
 
-from result.models import Enrollment, LectureProgress, Review, Wishlist
-from course.models import Course
+from result.models import Enrollment, LectureProgress, Review, Wishlist, Note
+from course.models import Course, Lecture
 
 
 @api_view(['GET'])
@@ -192,17 +192,21 @@ def course_player_data(request, course_slug):
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Check if student is enrolled
-    try:
-        enrollment = Enrollment.objects.get(
-            student=request.user,
-            course=course
-        )
-    except Enrollment.DoesNotExist:
-        return Response(
-            {"error": "You are not enrolled in this course"},
-            status=status.HTTP_403_FORBIDDEN
-        )
+    # Check if student is enrolled or is instructor
+    is_instructor = (course.instructor == request.user)
+    enrollment = None
+    
+    if not is_instructor:
+        try:
+            enrollment = Enrollment.objects.get(
+                student=request.user,
+                course=course
+            )
+        except Enrollment.DoesNotExist:
+            return Response(
+                {"error": "You are not enrolled in this course"},
+                status=status.HTTP_403_FORBIDDEN
+            )
     
     # Get curriculum with progress
     from course.models import Section
@@ -213,18 +217,28 @@ def course_player_data(request, course_slug):
         lectures = []
         for lecture in section.lectures.all():
             # Get progress for this lecture
-            progress = LectureProgress.objects.filter(
-                enrollment=enrollment,
-                lecture=lecture
-            ).first()
+            completed = False
+            last_position = 0
+            
+            if enrollment:
+                progress = LectureProgress.objects.filter(
+                    enrollment=enrollment,
+                    lecture=lecture
+                ).first()
+                if progress:
+                    completed = progress.completed
+                    last_position = progress.last_position
             
             lectures.append({
                 'id': lecture.id,
                 'title': lecture.title,
                 'duration': lecture.duration,
+                'video_url': lecture.video_url,
+                'video_file': lecture.video_file.url if lecture.video_file else None,
+                'video_source': lecture.video_source,
                 'is_preview': lecture.is_preview,
-                'completed': progress.completed if progress else False,
-                'last_position': progress.last_position if progress else 0
+                'completed': completed,
+                'last_position': last_position
             })
         
         curriculum.append({
@@ -233,17 +247,52 @@ def course_player_data(request, course_slug):
             'lectures': lectures
         })
     
+    # Get User Notes
+    notes = Note.objects.filter(
+        user=request.user,
+        lecture__section__course=course
+    ).values('id', 'lecture_id', 'content', 'timestamp', 'created_at')
+
+    # Get Q&A (Top 20 recent)
+    from result.models import Question, Review
+    questions = Question.objects.filter(course=course).select_related('user').order_by('-created_at')[:20]
+    questions_data = [{
+        'id': q.id,
+        'title': q.title,
+        'question': q.question,
+        'user': q.user.username,
+        'created_at': q.created_at,
+        'answers_count': q.answer_count
+    } for q in questions]
+
+    # Get Reviews (Top 10 helpful)
+    reviews = Review.objects.filter(course=course).select_related('student').order_by('-helpful_count', '-created_at')[:10]
+    reviews_data = [{
+        'id': r.id,
+        'user': r.student.username,
+        'rating': r.rating,
+        'comment': r.comment,
+        'created_at': r.created_at
+    } for r in reviews]
+
     return Response({
         'course': {
             'id': course.id,
             'title': course.title,
+            'description': course.description,
             'instructor': course.instructor.get_full_name(),
+            'what_you_will_learn': course.what_you_will_learn,
+            'average_rating': course.average_rating,
+            'total_reviews': course.total_reviews,
         },
         'enrollment': {
-            'progress_percent': float(enrollment.progress_percent),
-            'last_accessed': enrollment.last_accessed
+            'progress_percent': float(enrollment.progress_percent) if enrollment else 0.0,
+            'last_accessed': enrollment.last_accessed if enrollment else None
         },
-        'curriculum': curriculum
+        'curriculum': curriculum,
+        'notes': list(notes),
+        'questions': questions_data,
+        'reviews': reviews_data
     })
 
 
@@ -287,3 +336,105 @@ def generate_certificate(request, enrollment_id):
         "certificate_number": enrollment.certificate_number,
         "download_url": f"/api/learning/certificate/{enrollment_id}/download/"
     })
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def update_lecture_progress(request, lecture_id):
+    """
+    Update progress for a specific lecture
+    """
+    try:
+        lecture = Lecture.objects.get(id=lecture_id)
+        # Find enrollment
+        enrollment = Enrollment.objects.get(
+            student=request.user,
+            course=lecture.section.course
+        )
+    except (Lecture.DoesNotExist, Enrollment.DoesNotExist):
+        return Response({"error": "Invalid lecture or not enrolled"}, status=400)
+    
+    completed = request.data.get('completed', False)
+    
+    progress, created = LectureProgress.objects.get_or_create(
+        enrollment=enrollment,
+        lecture=lecture
+    )
+    
+    if completed and not progress.completed:
+        progress.mark_complete()
+    
+    progress.save()
+    
+    # Update last accessed
+    enrollment.last_accessed_lecture = lecture
+    enrollment.save()
+    
+    return Response({"success": True, "progress": enrollment.progress_percent})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_notes(request, course_slug):
+    """
+    Get all notes for a course
+    """
+    try:
+        course = Course.objects.get(slug=course_slug)
+        # Verify enrollment
+        if not Enrollment.objects.filter(student=request.user, course=course).exists():
+             return Response({"error": "Not enrolled"}, status=403)
+             
+        notes = Note.objects.filter(
+            user=request.user,
+            lecture__section__course=course
+        ).select_related('lecture')
+        
+        data = []
+        for note in notes:
+            data.append({
+                'id': note.id,
+                'lecture_id': note.lecture.id,
+                'lecture_title': note.lecture.title,
+                'content': note.content,
+                'timestamp': note.timestamp,
+                'created_at': note.created_at
+            })
+            
+        return Response(data)
+    except Course.DoesNotExist:
+        return Response({"error": "Course not found"}, status=404)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def save_note(request):
+    """
+    Create or update a note
+    """
+    lecture_id = request.data.get('lecture_id')
+    content = request.data.get('content')
+    timestamp = request.data.get('timestamp', 0)
+    note_id = request.data.get('id')
+    
+    if not all([lecture_id, content]):
+        return Response({"error": "Missing required fields"}, status=400)
+        
+    try:
+        if note_id:
+            note = Note.objects.get(id=note_id, user=request.user)
+            note.content = content
+            note.save()
+        else:
+            note = Note.objects.create(
+                user=request.user,
+                lecture_id=lecture_id,
+                content=content,
+                timestamp=timestamp
+            )
+            
+        return Response({
+            'id': note.id,
+            'content': note.content,
+            'timestamp': note.timestamp
+        })
+    except Exception as e:
+        return Response({"error": str(e)}, status=400)

@@ -142,3 +142,90 @@ class ActivityLog(models.Model):
     
     def __str__(self):
         return f"[{self.created_at}] {self.action}: {self.message}"
+
+
+class SystemKey(models.Model):
+    """
+    Dynamic system configuration (Key-Value Store)
+    """
+    TYPE_CHOICES = [
+        ('bool', 'Boolean'),
+        ('int', 'Integer'),
+        ('float', 'Float'),
+        ('string', 'String'),
+        ('json', 'JSON'),
+    ]
+
+    key = models.CharField(max_length=100, unique=True, db_index=True)
+    value = models.TextField(help_text="Raw value (will be cast based on type)")
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='string')
+    description = models.TextField(blank=True)
+    is_public = models.BooleanField(default=False, help_text="Expose to public API?")
+    
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['key']
+        
+    def __str__(self):
+        return f"{self.key} ({self.type})"
+        
+    @property
+    def cast_value(self):
+        import json
+        if self.type == 'bool':
+            return self.value.lower() == 'true'
+        elif self.type == 'int':
+            return int(self.value)
+        elif self.type == 'float':
+            return float(self.value)
+        elif self.type == 'json':
+            try:
+                return json.loads(self.value)
+            except:
+                return {}
+        return self.value
+
+
+class Notification(models.Model):
+    """
+    User notifications for system events
+    """
+    TYPE_CHOICES = [
+        ('system', _('System')),
+        ('course', _('Course Announcement')),
+        ('learning', _('Bình luận/Hỏi đáp')), # Comment/Q&A
+        ('review', _('New Review')),
+        ('enrollment', _('New Enrollment')),
+    ]
+    
+    recipient = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.CASCADE,
+        related_name='notifications'
+    )
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    notification_type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES,
+        default='system'
+    )
+    link = models.CharField(
+        max_length=255, 
+        blank=True,
+        help_text=_("Link to relevant resource (e.g. /course/slug)")
+    )
+    is_read = models.BooleanField(default=False)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['recipient', '-created_at']),
+            models.Index(fields=['recipient', 'is_read']),
+        ]
+    
+    def __str__(self):
+        return f"{self.recipient.username}: {self.title}"

@@ -26,6 +26,7 @@ class Transaction(models.Model):
     PAYMENT_METHOD_CHOICES = [
         ('stripe', 'Stripe'),
         ('paypal', 'PayPal'),
+        ('momo', 'MoMo Wallet'),
         ('free', 'Free Enrollment'),
     ]
     
@@ -34,7 +35,7 @@ class Transaction(models.Model):
     enrollment = models.OneToOneField(
         Enrollment,
         on_delete=models.CASCADE,
-        related_name='transaction'
+        related_name='payment_transaction'
     )
     
     # Parties
@@ -118,7 +119,7 @@ class Transaction(models.Model):
     def save(self, *args, **kwargs):
         # Calculate fees
         if not self.platform_fee:
-            fee_decimal = self.platform_fee_percent / Decimal('100')
+            fee_decimal = Decimal(str(self.platform_fee_percent)) / Decimal('100')
             self.platform_fee = round(self.gross_amount * fee_decimal, 2)
             self.instructor_revenue = self.gross_amount - self.platform_fee
         super().save(*args, **kwargs)
@@ -264,3 +265,63 @@ class InstructorPayout(models.Model):
     
     def __str__(self):
         return f"{self.instructor.username} - {self.period_year}/{self.period_month:02d} (${self.payout_amount})"
+
+
+class Order(models.Model):
+    """
+    Represents a checkout session / invoice for multiple items
+    """
+    STATUS_CHOICES = [
+        ('pending', _('Pending')),
+        ('completed', _('Completed')),
+        ('failed', _('Failed')),
+        ('refunded', _('Refunded')),
+    ]
+    
+    order_number = models.CharField(max_length=50, unique=True, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='orders'
+    )
+    
+    # Financials
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    final_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    # Meta
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    payment_provider_session_id = models.CharField(max_length=255, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        
+    def __str__(self):
+        return f"Order #{self.order_number} - {self.user.username}"
+        
+    def save(self, *args, **kwargs):
+        if not self.order_number:
+            import datetime
+            import random
+            now = datetime.datetime.now()
+            # ORD-YYYYMMDD-XXXX
+            rand = random.randint(1000, 9999)
+            self.order_number = f"ORD-{now.strftime('%Y%m%d')}-{rand}"
+        super().save(*args, **kwargs)
+
+
+class OrderItem(models.Model):
+    """
+    Line item in an order
+    """
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
+    course = models.ForeignKey('course.Course', on_delete=models.PROTECT)
+    
+    price = models.DecimalField(max_digits=8, decimal_places=2, help_text="Price at time of purchase")
+    
+    def __str__(self):
+        return f"{self.course.title} ({self.order.order_number})"

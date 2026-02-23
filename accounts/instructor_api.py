@@ -28,7 +28,7 @@ def instructor_dashboard(request):
         )
     
     # Get instructor's courses
-    courses = Course.objects.filter(instructor=request.user)
+    courses = Course.objects.filter(instructor=request.user, is_deleted=False)
     
     # Total statistics
     total_courses = courses.count()
@@ -94,19 +94,19 @@ def instructor_dashboard(request):
         })
     
     return Response({
-        'overview': {
-            'total_courses': total_courses,
-            'total_students': total_students,
-            'total_reviews': total_reviews,
-            'average_rating': round(float(avg_rating), 2),
-            'total_revenue': float(total_revenue),
-        },
+        # Flatten stats to root
+        'total_courses': total_courses,
+        'total_students': total_students,
+        'total_reviews': total_reviews,
+        'average_rating': round(float(avg_rating), 2),
+        'total_revenue': float(total_revenue),
+        
         'this_month': {
             'enrollments': this_month_enrollments,
             'revenue': float(this_month_revenue),
         },
         'recent_enrollments': recent_enrollments_data,
-        'course_performance': course_stats,
+        'courses': course_stats, 
     })
 
 

@@ -24,4 +24,9 @@ urlpatterns = [
     path('my-wishlist/', student_api.my_wishlist, name='my-wishlist'),
     path('player/<slug:course_slug>/', student_api.course_player_data, name='course-player'),
     path('certificate/<int:enrollment_id>/generate/', student_api.generate_certificate, name='generate-certificate'),
+    
+    # Learning Progress & Notes
+    path('lecture/<int:lecture_id>/complete/', student_api.update_lecture_progress, name='complete-lecture'),
+    path('notes/', student_api.save_note, name='save-note'),
+    path('course/<slug:course_slug>/notes/', student_api.get_notes, name='get-notes'),
 ]

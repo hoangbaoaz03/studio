@@ -35,11 +35,16 @@ urlpatterns = [
     path('accounts/', include('allauth.urls')),
     
     # API Endpoints
-    path('api/', include('core.urls', namespace='core')),  # Homepage & discovery
     path('api/courses/', include('course.urls', namespace='course')),
     path('api/learning/', include('result.urls', namespace='result')),
     path('api/payments/', include('payments.urls', namespace='payments')),
     path('api/instructor/', include('accounts.instructor_urls', namespace='instructor')),
+    path('api/certification/', include('certification.urls', namespace='certification')),
+    path('api/business/', include('organization.urls', namespace='organization')),
+    path('api/auth/', include('accounts.api_urls')),
+    path('api/admin/', include('admin_portal.urls')),
+    path('api/analytics/', include('analytics.urls')),
+    path('api/', include('core.urls', namespace='core')),  # Homepage & discovery (Keep last)
 ]
 
 # Media files (development only)

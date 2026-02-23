@@ -7,16 +7,19 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
+from mptt.models import MPTTModel, TreeForeignKey
 import uuid
 
 
-class Category(models.Model):
+class Category(MPTTModel):
     """
     Top-level course categories
     Examples: Development, Business, Design, Marketing
     """
     name = models.CharField(max_length=100, unique=True)
+    name_vi = models.CharField(max_length=100, blank=True, null=True, help_text=_("Vietnamese name"))
     slug = models.SlugField(max_length=120, unique=True, blank=True)
+    parent = TreeForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     icon = models.CharField(
         max_length=50,
         blank=True,
@@ -25,10 +28,16 @@ class Category(models.Model):
     description = models.TextField(blank=True)
     order = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    is_popular = models.BooleanField(default=False)
     
+    class MPTTMeta:
+        order_insertion_by = ['order', 'name']
+
     class Meta:
         verbose_name_plural = "Categories"
-        ordering = ['order', 'name']
+        # MPTT models usually don't need 'ordering' in Meta as it's handled by MPTT, 
+        # but if we want flat ordering we can keep it. MPTTMeta handles tree ordering.
+        # ordering = ['order', 'name'] 
     
     def __str__(self):
         return self.name
@@ -40,7 +49,10 @@ class Category(models.Model):
     
     @property
     def course_count(self):
-        return self.courses.filter(status='published').count()
+        # Count courses in this category and all subcategories
+        Course = self.courses.model
+        categories = self.get_descendants(include_self=True)
+        return Course.objects.filter(category__in=categories, status='published').count()
 
 
 class Subcategory(models.Model):
@@ -94,6 +106,8 @@ class Course(models.Model):
         ('draft', _('Draft')),
         ('pending', _('Pending Review')),
         ('published', _('Published')),
+        ('paused', _('Paused')),
+        ('scheduled', _('Scheduled')),
         ('archived', _('Archived')),
     ]
     
@@ -108,11 +122,13 @@ class Course(models.Model):
     
     # Basic details
     title = models.CharField(max_length=200)
+    title_vi = models.CharField(max_length=200, blank=True, null=True, help_text=_("Vietnamese title"))
     subtitle = models.CharField(
         max_length=200,
         blank=True,
         help_text=_("Short catchy subtitle")
     )
+    subtitle_vi = models.CharField(max_length=200, blank=True, null=True, help_text=_("Vietnamese subtitle"))
     slug = models.SlugField(max_length=250, unique=True, blank=True)
     
     # Categorization
@@ -134,17 +150,33 @@ class Course(models.Model):
     description = models.TextField(
         help_text=_("Full course description (supports Markdown)")
     )
+    description_vi = models.TextField(blank=True, null=True, help_text=_("Vietnamese description"))
     what_you_will_learn = models.JSONField(
         default=list,
         help_text=_("List of learning outcomes")
+    )
+    what_you_will_learn_vi = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_("Vietnamese learning outcomes")
     )
     requirements = models.JSONField(
         default=list,
         help_text=_("Prerequisites and requirements")
     )
+    requirements_vi = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_("Vietnamese requirements")
+    )
     target_audience = models.JSONField(
         default=list,
         help_text=_("Who this course is for")
+    )
+    target_audience_vi = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_("Vietnamese target audience")
     )
     
     # Media
@@ -209,6 +241,22 @@ class Course(models.Model):
         default='draft'
     )
     is_featured = models.BooleanField(default=False)
+    
+    # Engagement
+    welcome_message = models.TextField(
+        blank=True,
+        help_text=_("Message sent to students upon enrollment")
+    )
+    congratulations_message = models.TextField(
+        blank=True,
+        help_text=_("Message sent to students upon completion")
+    )
+
+    is_active = models.BooleanField(default=True, help_text=_("Admin control to hide course"))
+    
+    # Soft Delete
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -321,8 +369,31 @@ class Section(models.Model):
 
 class Lecture(models.Model):
     """
-    Individual video lessons within sections
+    Individual learning units within sections
+    Supports Video, Content, and Resources
     """
+    LECTURE_TYPES = [
+        ('video', _('Video')),
+        ('article', _('Article')),
+        ('file', _('File/Resource')),
+        ('quiz', _('Quiz')),
+    ]
+    
+    STATUS_CHOICES = [
+        ('draft', _('Draft')),
+        ('published', _('Published')),
+        ('paused', _('Paused')),
+        ('scheduled', _('Scheduled')),
+        ('processing', _('Processing')),
+    ]
+    
+    VIDEO_SOURCES = [
+        ('upload', _('Direct Upload')),
+        ('youtube', _('YouTube')),
+        ('vimeo', _('Vimeo')),
+        ('external', _('External URL')),
+    ]
+
     section = models.ForeignKey(
         Section,
         on_delete=models.CASCADE,
@@ -331,26 +402,61 @@ class Lecture(models.Model):
     title = models.CharField(max_length=200)
     order = models.PositiveIntegerField(default=0)
     
-    # Video
+    # Classification
+    lecture_type = models.CharField(
+        max_length=20,
+        choices=LECTURE_TYPES,
+        default='video'
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='draft'
+    )
+    
+    # Video Content
+    video_source = models.CharField(
+        max_length=20,
+        choices=VIDEO_SOURCES,
+        default='upload',
+        blank=True
+    )
+    video_file = models.FileField(
+        upload_to='course_videos/',
+        blank=True,
+        null=True,
+        help_text=_("Direct video file upload")
+    )
     video_url = models.URLField(
         blank=True,
-        help_text=_("S3/CloudFront video URL")
+        help_text=_("URL for YouTube/Vimeo or public file")
+    )
+    asset_id = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text=_("External ID or S3 Key")
     )
     duration = models.IntegerField(
         default=0,
-        help_text=_("Video duration in seconds")
+        help_text=_("Duration in seconds")
     )
+    published_at = models.DateTimeField(null=True, blank=True, help_text=_("Scheduled publish time"))
     
-    # Content
+    # Text/Article Content
     content = models.TextField(
         blank=True,
-        help_text=_("Text content or transcript")
+        help_text=_("Short description or summary")
+    )
+    article_content = models.TextField(
+        blank=True,
+        help_text=_("Main content for Article type (Markdown supported)")
     )
     
-    # Resources
+    # Resources (Legacy/JSON way - consider using CourseResource for files)
     resources = models.JSONField(
         default=list,
-        help_text=_("Downloadable resources (PDFs, code files)")
+        blank=True,
+        help_text=_("Downloadable resources (legacy)")
     )
     
     # Preview
@@ -358,6 +464,7 @@ class Lecture(models.Model):
         default=False,
         help_text=_("Free preview lecture")
     )
+    admin_note = models.TextField(blank=True, help_text=_("Internal admin notes/rejection reason"))
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -367,7 +474,7 @@ class Lecture(models.Model):
         unique_together = ['section', 'order']
     
     def __str__(self):
-        return f"{self.section.course.title} - {self.title}"
+        return f"{self.section.course.title} - {self.title} ({self.lecture_type})"
 
 
 class CourseResource(models.Model):
@@ -389,5 +496,70 @@ class CourseResource(models.Model):
     
     uploaded_at = models.DateTimeField(auto_now_add=True)
     
+
+class Announcement(models.Model):
+    """
+    Course announcements/notifications from instructor
+    """
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='announcements'
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sent_announcements'
+    )
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['course', '-created_at']),
+        ]
+        
     def __str__(self):
-        return f"{self.lecture.title} - {self.title}"
+        return f"Announcement: {self.title} ({self.course.title})"
+
+
+class QuizQuestion(models.Model):
+    """
+    Questions for a quiz lecture
+    """
+    lecture = models.ForeignKey(
+        Lecture,
+        on_delete=models.CASCADE,
+        related_name='quiz_questions',
+        limit_choices_to={'lecture_type': 'quiz'}
+    )
+    question_text = models.TextField()
+    explanation = models.TextField(blank=True, help_text=_("Explanation for the correct answer"))
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order', 'id']
+        
+    def __str__(self):
+        return f"Q: {self.question_text[:50]}"
+
+
+class QuizAnswer(models.Model):
+    """
+    Answers for a quiz question
+    """
+    question = models.ForeignKey(
+        QuizQuestion,
+        on_delete=models.CASCADE,
+        related_name='answers'
+    )
+    answer_text = models.CharField(max_length=255)
+    is_correct = models.BooleanField(default=False)
+    
+    def __str__(self):
+        return self.answer_text
+

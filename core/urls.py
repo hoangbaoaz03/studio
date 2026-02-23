@@ -1,12 +1,17 @@
 """
 URL routing for homepage and discovery
 """
-from django.urls import path
-from . import homepage_api, recommendations
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from . import homepage_api, recommendations, views
 
 app_name = 'core'
 
+router = DefaultRouter()
+router.register(r'notifications', views.NotificationViewSet, basename='notification')
+
 urlpatterns = [
+    path('', include(router.urls)),
     path('homepage/', homepage_api.homepage_data, name='homepage'),
     path('search/', homepage_api.search_courses, name='search'),
     path('category/<slug:slug>/', homepage_api.category_courses, name='category-courses'),

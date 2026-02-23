@@ -13,6 +13,7 @@ router.register(r'subcategories', views.SubcategoryViewSet, basename='subcategor
 router.register(r'courses', views.CourseViewSet, basename='course')
 router.register(r'sections', views.SectionViewSet, basename='section')
 router.register(r'lectures', views.LectureViewSet, basename='lecture')
+router.register(r'announcements', views.AnnouncementViewSet, basename='announcement')
 
 urlpatterns = [
     path('', include(router.urls)),
