@@ -79,3 +79,4 @@ numpy==1.26.4
 daphne==4.1.2
 dj-database-url==2.3.0
 gunicorn==23.0.0
+channels==4.2.0
