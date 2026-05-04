@@ -49,7 +49,7 @@ class MoMoProvider(PaymentProvider):
 
         payload = {
             'partnerCode': self.partner_code,
-            'partnerName': "SkyLearn",
+            'partnerName': "Studigo",
             'storeId': "MomoStore",
             'requestId': request_id,
             'amount': amount,

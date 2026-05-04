@@ -1,5 +1,5 @@
 """
-Comprehensive sample data seeder for SkyLearn
+Comprehensive sample data seeder for Studigo
 Creates Udemy-like data with multiple categories, instructors, and courses
 """
 import os

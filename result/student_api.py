@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Avg
 
-from result.models import Enrollment, LectureProgress, Review, Wishlist, Note
+from result.models import Enrollment, LectureProgress, Review, Wishlist, Note, QuizResult, StudentAnswer
 from course.models import Course, Lecture
 
 
@@ -55,8 +55,7 @@ def my_learning(request):
                 'id': enrollment.course.id,
                 'title': enrollment.course.title,
                 'slug': enrollment.course.slug,
-                'thumbnail': enrollment.course.thumbnail.url if enrollment.course.thumbnail else None,
-                'instructor': enrollment.course.instructor.get_full_name() or enrollment.course.instructor.username,
+                'instructor': (enrollment.course.instructor.get_full_name() or enrollment.course.instructor.username) if enrollment.course.instructor else "Unknown Instructor",
             },
             'progress_percent': float(enrollment.progress_percent),
             'completed': enrollment.completed_at is not None,
@@ -132,7 +131,7 @@ def my_certificates(request):
         certificates.append({
             'certificate_number': enrollment.certificate_number,
             'course_title': enrollment.course.title,
-            'instructor': enrollment.course.instructor.get_full_name(),
+            'instructor': enrollment.course.instructor.get_full_name() if enrollment.course.instructor else "Unknown Instructor",
             'completed_at': enrollment.completed_at,
             'download_url': f'/api/learning/certificate/{enrollment.id}/download/'
         })
@@ -165,7 +164,7 @@ def my_wishlist(request):
                 'price': float(item.course.price),
                 'discount_price': float(item.course.discount_price) if item.course.discount_price else None,
                 'current_price': float(item.course.current_price),
-                'instructor': item.course.instructor.get_full_name(),
+                'instructor': item.course.instructor.get_full_name() if item.course.instructor else "Unknown Instructor",
                 'average_rating': float(item.course.average_rating),
             },
             'added_at': item.added_at
@@ -185,15 +184,21 @@ def course_player_data(request, course_slug):
     Includes curriculum, progress, Q&A
     """
     try:
-        course = Course.objects.get(slug=course_slug, status='published')
+        course = Course.objects.get(slug=course_slug)
+        is_instructor = course.courseinstructors.filter(instructor=request.user).exists()
+        
+        # If not published, only instructor can view
+        if course.status != 'published' and not is_instructor:
+            return Response(
+                {"error": "Course not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
     except Course.DoesNotExist:
         return Response(
             {"error": "Course not found"},
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Check if student is enrolled or is instructor
-    is_instructor = (course.instructor == request.user)
     enrollment = None
     
     if not is_instructor:
@@ -232,6 +237,9 @@ def course_player_data(request, course_slug):
             lectures.append({
                 'id': lecture.id,
                 'title': lecture.title,
+                'lecture_type': lecture.lecture_type,
+                'content': lecture.content,
+                'article_content': lecture.article_content,
                 'duration': lecture.duration,
                 'video_url': lecture.video_url,
                 'video_file': lecture.video_file.url if lecture.video_file else None,
@@ -255,15 +263,9 @@ def course_player_data(request, course_slug):
 
     # Get Q&A (Top 20 recent)
     from result.models import Question, Review
-    questions = Question.objects.filter(course=course).select_related('user').order_by('-created_at')[:20]
-    questions_data = [{
-        'id': q.id,
-        'title': q.title,
-        'question': q.question,
-        'user': q.user.username,
-        'created_at': q.created_at,
-        'answers_count': q.answer_count
-    } for q in questions]
+    from result.serializers import QuestionSerializer
+    questions = Question.objects.filter(course=course).select_related('user').prefetch_related('answers', 'answers__user').order_by('-created_at')[:20]
+    questions_data = QuestionSerializer(questions, many=True).data
 
     # Get Reviews (Top 10 helpful)
     reviews = Review.objects.filter(course=course).select_related('student').order_by('-helpful_count', '-created_at')[:10]
@@ -280,7 +282,8 @@ def course_player_data(request, course_slug):
             'id': course.id,
             'title': course.title,
             'description': course.description,
-            'instructor': course.instructor.get_full_name(),
+            'instructor_id': course.instructor.id if course.instructor else None,
+            'instructor': course.instructor.get_full_name() if course.instructor else "Unknown Instructor",
             'what_you_will_learn': course.what_you_will_learn,
             'average_rating': course.average_rating,
             'total_reviews': course.total_reviews,
@@ -340,14 +343,20 @@ def generate_certificate(request, enrollment_id):
 @permission_classes([IsAuthenticated])
 def update_lecture_progress(request, lecture_id):
     """
-    Update progress for a specific lecture
+    Update progress for a specific lecture (toggle complete/incomplete)
     """
     try:
         lecture = Lecture.objects.get(id=lecture_id)
+        course = lecture.section.course
+        
+        # If user is instructor, just simulate success since they don't have an enrollment
+        if course.instructor == request.user:
+            return Response({"success": True, "progress": 100})
+            
         # Find enrollment
         enrollment = Enrollment.objects.get(
             student=request.user,
-            course=lecture.section.course
+            course=course
         )
     except (Lecture.DoesNotExist, Enrollment.DoesNotExist):
         return Response({"error": "Invalid lecture or not enrolled"}, status=400)
@@ -361,14 +370,18 @@ def update_lecture_progress(request, lecture_id):
     
     if completed and not progress.completed:
         progress.mark_complete()
+    elif not completed and progress.completed:
+        progress.mark_incomplete()
     
-    progress.save()
+    # Re-fetch enrollment FIRST to pick up the progress_percent
+    # that was just updated inside mark_complete/mark_incomplete
+    enrollment.refresh_from_db()
     
-    # Update last accessed
+    # Now update last accessed and save
     enrollment.last_accessed_lecture = lecture
     enrollment.save()
     
-    return Response({"success": True, "progress": enrollment.progress_percent})
+    return Response({"success": True, "progress": float(enrollment.progress_percent)})
 
 
 @api_view(['GET'])
@@ -438,3 +451,150 @@ def save_note(request):
         })
     except Exception as e:
         return Response({"error": str(e)}, status=400)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_quiz_data(request, lecture_id):
+    """
+    Get questions and choices for a quiz (without correct answers).
+    """
+    from course.models import Lecture
+    try:
+        lecture = Lecture.objects.get(id=lecture_id, lecture_type='quiz')
+        
+        # Verify enrollment or instructor status
+        is_instructor = lecture.section.course.courseinstructors.filter(instructor=request.user).exists()
+        if not is_instructor and not Enrollment.objects.filter(student=request.user, course=lecture.section.course).exists():
+            return Response({"error": "Not enrolled"}, status=403)
+            
+        questions = lecture.quiz_questions.all().prefetch_related('answers')
+        
+        data = []
+        for q in questions:
+            choices = []
+            for a in q.answers.all():
+                # We do NOT include is_correct so the student can't cheat!
+                choices.append({
+                    'id': a.id,
+                    'text': a.answer_text
+                })
+            data.append({
+                'id': q.id,
+                'question_text': q.question_text,
+                'choices': choices
+            })
+            
+        return Response({
+            'lecture_id': lecture.id,
+            'title': lecture.title,
+            'questions': data
+        })
+    except Lecture.DoesNotExist:
+        return Response({"error": "Quiz not found"}, status=404)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def submit_quiz_answers(request, lecture_id):
+    """
+    Submit answers, grade the quiz, and return score.
+    request.data should be {"answers": { question_id: answer_id, ... }}
+    """
+    from course.models import Lecture, QuizQuestion, QuizAnswer
+    try:
+        lecture = Lecture.objects.get(id=lecture_id, lecture_type='quiz')
+        
+        if not Enrollment.objects.filter(student=request.user, course=lecture.section.course).exists() and not lecture.section.course.courseinstructors.filter(instructor=request.user).exists():
+            return Response({"error": "Not enrolled"}, status=403)
+            
+        student_answers_input = request.data.get('answers', {})
+        if not student_answers_input:
+            return Response({"error": "No answers provided"}, status=400)
+            
+        questions = lecture.quiz_questions.all()
+        total_questions = questions.count()
+        if total_questions == 0:
+            return Response({"error": "Quiz has no questions"}, status=400)
+            
+        correct_count = 0
+        results_details = []
+        
+        # Get previous attempts
+        previous_attempts = QuizResult.objects.filter(student=request.user, quiz=lecture).count()
+        attempt_number = previous_attempts + 1
+        
+        # Grade the submission
+        quiz_result = QuizResult.objects.create(
+            student=request.user,
+            quiz=lecture,
+            attempt_number=attempt_number,
+            score_achieved=0,
+            is_passed=False
+        )
+        
+        student_answer_objs = []
+        
+        for q in questions:
+            q_id_str = str(q.id)
+            selected_answer_id = student_answers_input.get(q_id_str)
+            
+            is_correct = False
+            selected_ans_obj = None
+            
+            # Find correct answer to return in details
+            correct_ans_obj = q.answers.filter(is_correct=True).first()
+            
+            if selected_answer_id:
+                try:
+                    selected_ans_obj = q.answers.get(id=selected_answer_id)
+                    is_correct = selected_ans_obj.is_correct
+                    if is_correct:
+                        correct_count += 1
+                        
+                    student_answer_objs.append(
+                        StudentAnswer(
+                            result=quiz_result,
+                            question=q,
+                            selected_answer=selected_ans_obj,
+                            is_correct=is_correct
+                        )
+                    )
+                except QuizAnswer.DoesNotExist:
+                    pass
+                    
+            results_details.append({
+                'question_id': q.id,
+                'question_text': q.question_text,
+                'explanation': q.explanation,
+                'selected_answer_id': selected_answer_id,
+                'is_correct': is_correct,
+                'correct_answer_id': correct_ans_obj.id if correct_ans_obj else None,
+                'correct_answer_text': correct_ans_obj.answer_text if correct_ans_obj else None
+            })
+            
+        StudentAnswer.objects.bulk_create(student_answer_objs)
+        
+        # Calculate final score and pass status (70% to pass)
+        score_percent = (correct_count / total_questions) * 100
+        is_passed = score_percent >= 70
+        
+        quiz_result.score_achieved = score_percent
+        quiz_result.is_passed = is_passed
+        quiz_result.save()
+        
+        return Response({
+            'score': round(score_percent, 2),
+            'correct_count': correct_count,
+            'total_questions': total_questions,
+            'is_passed': is_passed,
+            'attempt_number': attempt_number,
+            'details': results_details
+        })
+        
+    except Lecture.DoesNotExist:
+        return Response({"error": "Quiz not found"}, status=404)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Response({"error": str(e)}, status=500)

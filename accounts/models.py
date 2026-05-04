@@ -18,6 +18,10 @@ class User(AbstractUser):
         default=False,
         help_text=_("Can create and sell courses")
     )
+    is_business = models.BooleanField(
+        default=False,
+        help_text=_("Business/Enterprise user")
+    )
     
     # Profile
     email_verified = models.BooleanField(default=False)
@@ -42,6 +46,8 @@ class User(AbstractUser):
     linkedin = models.URLField(blank=True)
     twitter = models.CharField(max_length=50, blank=True)
     youtube = models.URLField(blank=True)
+    
+    deleted_at = models.DateTimeField(null=True, blank=True, help_text=_("Soft delete timestamp"))
     
     class Meta:
         ordering = ['-date_joined']
@@ -140,3 +146,55 @@ class InstructorProfile(models.Model):
             self.average_rating = round(avg, 2)
         
         self.save()
+
+
+class InstructorApplication(models.Model):
+    """
+    Model for managing instructor applications/upgrades
+    """
+    STATUS_CHOICES = [
+        ('pending', _('Pending Review')),
+        ('approved', _('Approved')),
+        ('rejected', _('Rejected')),
+        ('needs_update', _('Needs Update')),
+    ]
+    
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='instructor_applications'
+    )
+    qualifications = models.TextField(
+        help_text=_("Professional qualifications, degrees, and teaching experience")
+    )
+    certifications = models.FileField(
+        upload_to='instructor_applications/certs/',
+        blank=True,
+        null=True,
+        help_text=_("PDF or Image of relevant certifications")
+    )
+    demo_video = models.FileField(
+        upload_to='instructor_applications/demos/',
+        blank=True,
+        null=True,
+        help_text=_("Short demo teaching video")
+    )
+    
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    admin_note = models.TextField(
+        blank=True,
+        help_text=_("Reason for rejection or request for more information")
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        
+    def __str__(self):
+        return f"Application by {self.user.username} - {self.get_status_display()}"

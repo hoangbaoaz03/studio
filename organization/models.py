@@ -100,3 +100,55 @@ class OrganizationMember(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.organization.name} ({self.role})"
+
+class CourseLicense(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='course_licenses')
+    course = models.ForeignKey('course.Course', on_delete=models.CASCADE, related_name='organization_licenses')
+    order = models.ForeignKey('payments.Order', on_delete=models.SET_NULL, null=True, blank=True)
+    seats_total = models.IntegerField(default=0)
+    seats_used = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def get_available_seats(self):
+        return self.seats_total - self.seats_used
+        
+    def __str__(self):
+        return f"{self.organization.name} - {self.course.title} ({self.seats_used}/{self.seats_total})"
+
+class EmployeeCourseAccess(models.Model):
+    STATUS_CHOICES = (
+        ('active', 'Active'),
+        ('revoked', 'Revoked'),
+    )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    course_license = models.ForeignKey(CourseLicense, on_delete=models.CASCADE, related_name='employee_accesses')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_course_accesses')
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='granted_accesses')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    granted_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ('course_license', 'user')
+        
+    def __str__(self):
+        return f"{self.user.username} - {self.course_license.course.title} ({self.status})"
+
+
+class TeamCoursePermission(models.Model):
+    """
+    Grant a Team (and its MANAGER/leader) permission to assign seats 
+    for a specific CourseLicense.
+    """
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='course_permissions')
+    course_license = models.ForeignKey(CourseLicense, on_delete=models.CASCADE, related_name='team_permissions')
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('team', 'course_license')
+
+    def __str__(self):
+        return f"{self.team.name} → {self.course_license.course.title}"
+

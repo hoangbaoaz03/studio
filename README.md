@@ -1,4 +1,4 @@
-# SkyLearn Marketplace Platform
+# Studigo Marketplace Platform
 
 ## Overview
 Modern online course marketplace platform built with Django and Django REST Framework.

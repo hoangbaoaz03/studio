@@ -74,26 +74,6 @@ class ReviewSerializer(serializers.ModelSerializer):
         read_only_fields = ['student', 'helpful_count', 'not_helpful_count', 'created_at', 'updated_at']
 
 
-class QuestionSerializer(serializers.ModelSerializer):
-    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
-    
-    class Meta:
-        model = Question
-        fields = [
-            'id',
-            'user',
-            'user_name',
-            'lecture',
-            'title',
-            'question',
-            'timestamp',
-            'is_answered',
-            'answer_count',
-            'created_at'
-        ]
-        read_only_fields = ['user', 'is_answered', 'answer_count', 'created_at']
-
-
 class AnswerSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     
@@ -110,6 +90,28 @@ class AnswerSerializer(serializers.ModelSerializer):
             'created_at'
         ]
         read_only_fields = ['user', 'is_instructor_answer', 'upvote_count', 'created_at']
+
+
+class QuestionSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    answers = AnswerSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = Question
+        fields = [
+            'id',
+            'user',
+            'user_name',
+            'lecture',
+            'title',
+            'question',
+            'timestamp',
+            'is_answered',
+            'answer_count',
+            'created_at',
+            'answers'
+        ]
+        read_only_fields = ['user', 'is_answered', 'answer_count', 'created_at']
 
 
 class WishlistSerializer(serializers.ModelSerializer):

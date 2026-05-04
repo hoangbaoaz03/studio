@@ -1,0 +1,33 @@
+databases:
+  - name: studigo-db
+    plan: free
+    databaseName: studigo
+    user: studigo
+
+services:
+  - type: web
+    name: studigo-backend
+    plan: free
+    runtime: python
+    region: singapore
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: studigo-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://your-frontend.vercel.app"
+      - key: PYTHON_VERSION
+        value: "3.10.14"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        value: "https://your-frontend.vercel.app"

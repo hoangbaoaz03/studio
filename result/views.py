@@ -8,6 +8,9 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 
 from course.models import Course, Lecture
+from core.models import Notification
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 from .models import Enrollment, LectureProgress, Review, Question, Answer, Wishlist
 from .serializers import (
     EnrollmentSerializer,
@@ -95,7 +98,49 @@ class ReviewViewSet(viewsets.ModelViewSet):
         if not enrollment:
             raise PermissionError("You must be enrolled to review this course")
         
-        serializer.save(student=self.request.user, enrollment=enrollment)
+        from django.db import IntegrityError
+        from rest_framework.exceptions import ValidationError
+        
+        try:
+            review = serializer.save(student=self.request.user, enrollment=enrollment)
+        except IntegrityError:
+            raise ValidationError({"error": "You have already reviewed this course. Please update your existing review instead."})
+        
+        # Notify course instructor (primary)
+        primary_instructor = course.instructor
+        if primary_instructor and primary_instructor != self.request.user:
+            Notification.objects.create(
+                recipient=primary_instructor,
+                title=f"New Review for {course.title}",
+                message=f"{self.request.user.get_full_name()} wrote a review.",
+                notification_type='course',
+                link=f"/course/{course.slug}/learn?tab=reviews"
+            )
+            # Push notification via WebSocket
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"notifications_{primary_instructor.id}",
+                {"type": "send_notification", "data": {"event": "new_notification", "message": "New review received"}}
+            )
+        
+        # Broadcast review to course channel for real-time
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"course_{course.id}",
+            {
+                "type": "course_event",
+                "data": {
+                    "event": "new_review",
+                    "review": {
+                        "id": review.id,
+                        "student_name": self.request.user.get_full_name(),
+                        "rating": review.rating,
+                        "comment": review.comment,
+                        "created_at": review.created_at.isoformat() if review.created_at else None,
+                    }
+                }
+            }
+        )
     
     @action(detail=True, methods=['post'])
     def mark_helpful(self, request, pk=None):
@@ -149,9 +194,48 @@ class QuestionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Create a question"""
         lecture = serializer.validated_data['lecture']
-        serializer.save(
+        question = serializer.save(
             user=self.request.user,
             course=lecture.section.course
+        )
+        
+        # Notify primary instructor
+        course = lecture.section.course
+        primary_instructor = course.instructor
+        if primary_instructor and primary_instructor != self.request.user:
+            Notification.objects.create(
+                recipient=primary_instructor,
+                title=f"New Question in {course.title}",
+                message=f"{self.request.user.get_full_name()} asked: '{question.title[:50]}...'",
+                notification_type='learning',
+                link=f"/course/{course.slug}/learn?tab=qa&question={question.id}"
+            )
+            # Push notification via WebSocket
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"notifications_{primary_instructor.id}",
+                {"type": "send_notification", "data": {"event": "new_notification", "message": "New question received"}}
+            )
+        
+        # Broadcast question to course channel for real-time
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"course_{course.id}",
+            {
+                "type": "course_event",
+                "data": {
+                    "event": "new_question",
+                    "question": {
+                        "id": question.id,
+                        "title": question.title,
+                        "question": question.question,
+                        "user_name": self.request.user.get_full_name(),
+                        "answers": [],
+                        "answer_count": 0,
+                        "created_at": question.created_at.isoformat() if question.created_at else None,
+                    }
+                }
+            }
         )
 
 
@@ -170,7 +254,44 @@ class AnswerViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Create an answer"""
-        serializer.save(user=self.request.user)
+        answer = serializer.save(user=self.request.user)
+        
+        # Notify the question author if this is someone else answering
+        question = answer.question
+        if question.user != self.request.user:
+            Notification.objects.create(
+                recipient=question.user,
+                title="New Answer to your question",
+                message=f"{self.request.user.get_full_name()} answered your question: '{question.title[:50]}...'",
+                notification_type='learning',
+                link=f"/course/{question.course.slug}/learn?tab=qa&question={question.id}"
+            )
+            # Push notification via WebSocket
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"notifications_{question.user.id}",
+                {"type": "send_notification", "data": {"event": "new_notification", "message": "New answer to your question"}}
+            )
+        
+        # Broadcast answer to course channel for real-time
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"course_{question.course.id}",
+            {
+                "type": "course_event",
+                "data": {
+                    "event": "new_answer",
+                    "question_id": question.id,
+                    "answer": {
+                        "id": answer.id,
+                        "user_name": self.request.user.get_full_name(),
+                        "answer": answer.answer,
+                        "is_instructor_answer": answer.is_instructor_answer,
+                        "created_at": answer.created_at.isoformat() if answer.created_at else None,
+                    }
+                }
+            }
+        )
     
     @action(detail=True, methods=['post'])
     def upvote(self, request, pk=None):

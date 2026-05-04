@@ -15,7 +15,30 @@ router.register(r'sections', views.SectionViewSet, basename='section')
 router.register(r'lectures', views.LectureViewSet, basename='lecture')
 router.register(r'announcements', views.AnnouncementViewSet, basename='announcement')
 
+from django.http import JsonResponse
+def fix_db(request):
+    from .models import Course, CourseInstructor
+    from accounts.models import User
+    
+    first_instructor = User.objects.filter(is_instructor=True).first()
+    if not first_instructor:
+        return JsonResponse({"error": "No instructor found to assign courses to."})
+        
+    all_courses = Course.objects.all()
+    count = 0
+    for course in all_courses:
+        obj, created = CourseInstructor.objects.get_or_create(
+            course=course,
+            instructor=first_instructor,
+            defaults={'is_primary': True}
+        )
+        if created:
+            count += 1
+        
+    return JsonResponse({"status": "success", "assigned_to_instructor": count, "instructor": first_instructor.username})
+
 urlpatterns = [
+    path('fix-db/', fix_db),
     path('', include(router.urls)),
     
     # Course creation wizard

@@ -61,6 +61,15 @@ class Enrollment(models.Model):
     certificate_issued = models.BooleanField(default=False)
     certificate_number = models.CharField(max_length=100, blank=True, null=True, unique=True)
     
+    # B2B Link
+    organization = models.ForeignKey(
+        'organization.Organization',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='enrollments'
+    )
+    
     class Meta:
         ordering = ['-enrolled_at']
         unique_together = ['student', 'course']
@@ -74,9 +83,12 @@ class Enrollment(models.Model):
     
     def update_progress(self):
         """Calculate completion percentage based on watched lectures"""
-        total_lectures = self.course.total_lectures
+        from course.models import Lecture
+        # Count actual lectures in the course (not cached value)
+        total_lectures = Lecture.objects.filter(section__course=self.course).count()
         if total_lectures == 0:
             self.progress_percent = 0
+            self.save()
             return
         
         completed_lectures = LectureProgress.objects.filter(
@@ -84,16 +96,18 @@ class Enrollment(models.Model):
             completed=True
         ).count()
         
-        self.progress_percent = round(
-            (completed_lectures / total_lectures) * 100,
-            2
+        self.progress_percent = min(
+            round((completed_lectures / total_lectures) * 100, 2),
+            100.00
         )
         
         # Mark as completed if 100%
         if self.progress_percent >= 100 and not self.completed_at:
             from django.utils import timezone
             self.completed_at = timezone.now()
-            # TODO: Trigger certificate generation
+        # Reset completed_at if progress drops below 100%
+        elif self.progress_percent < 100 and self.completed_at:
+            self.completed_at = None
         
         self.save()
 
@@ -126,6 +140,16 @@ class LectureProgress(models.Model):
     last_watched = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     
+    # B2B Link & detailed tracking
+    organization = models.ForeignKey(
+        'organization.Organization',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='lecture_progresses'
+    )
+    watched_seconds = models.IntegerField(default=0, help_text=_("Total seconds watched"))
+    
     class Meta:
         unique_together = ['enrollment', 'lecture']
         indexes = [
@@ -142,6 +166,16 @@ class LectureProgress(models.Model):
             from django.utils import timezone
             self.completed = True
             self.completed_at = timezone.now()
+            self.save()
+            
+            # Update enrollment progress
+            self.enrollment.update_progress()
+    
+    def mark_incomplete(self):
+        """Mark lecture as not completed"""
+        if self.completed:
+            self.completed = False
+            self.completed_at = None
             self.save()
             
             # Update enrollment progress
@@ -311,8 +345,8 @@ class Answer(models.Model):
         return f"Answer by {self.user.username}"
     
     def save(self, *args, **kwargs):
-        # Check if user is the course instructor
-        if self.user == self.question.course.instructor:
+        # Check if user is one of the course instructors
+        if self.question.course.courseinstructors.filter(instructor=self.user).exists():
             self.is_instructor_answer = True
         super().save(*args, **kwargs)
         
@@ -373,4 +407,45 @@ class Note(models.Model):
         
     def __str__(self):
         return f"Note by {self.user.username} at {self.timestamp}s"
+
+
+class QuizResult(models.Model):
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='quiz_results'
+    )
+    quiz = models.ForeignKey(
+        'course.Lecture',
+        on_delete=models.CASCADE,
+        limit_choices_to={'lecture_type': 'quiz'}
+    )
+    attempt_number = models.IntegerField(default=1)
+    score_achieved = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    is_passed = models.BooleanField(default=False)
+    attempt_timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['student', 'quiz', 'attempt_number']
+
+class StudentAnswer(models.Model):
+    result = models.ForeignKey(
+        QuizResult,
+        on_delete=models.CASCADE,
+        related_name='student_answers'
+    )
+    question = models.ForeignKey(
+        'course.QuizQuestion',
+        on_delete=models.CASCADE
+    )
+    selected_answer = models.ForeignKey(
+        'course.QuizAnswer',
+        on_delete=models.CASCADE
+    )
+    is_correct = models.BooleanField(default=False, help_text="Denormalized for performance")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['result']),
+        ]
 

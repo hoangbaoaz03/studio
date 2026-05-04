@@ -294,6 +294,13 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     payment_provider_session_id = models.CharField(max_length=255, blank=True)
     
+    # B2B fields
+    order_type = models.CharField(max_length=20, choices=[('retail', 'Retail'), ('enterprise', 'Enterprise')], default='retail')
+    company_name = models.CharField(max_length=255, blank=True)
+    company_address = models.TextField(blank=True)
+    tax_code = models.CharField(max_length=50, blank=True)
+    invoice_pdf_url = models.URLField(blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -325,3 +332,61 @@ class OrderItem(models.Model):
     
     def __str__(self):
         return f"{self.course.title} ({self.order.order_number})"
+
+
+class B2BPayment(models.Model):
+    """
+    Handles enterprise/B2B large invoice payments (bank transfers, etc.)
+    """
+    STATUS_CHOICES = [
+        ('pending', _('Pending Verification')),
+        ('approved', _('Approved')),
+        ('rejected', _('Rejected')),
+    ]
+    
+    PAYMENT_TYPE_CHOICES = [
+        ('UPGRADE', 'Plan Upgrade'),
+        ('COURSE', 'Course Bulk Purchase'),
+    ]
+    
+    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='UPGRADE')
+    
+    organization = models.ForeignKey(
+        'organization.Organization', 
+        on_delete=models.CASCADE, 
+        related_name='b2b_payments'
+    )
+    
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    plan_upgrade = models.CharField(
+        max_length=20, 
+        choices=[('PRO', 'Pro'), ('ENTERPRISE', 'Enterprise')],
+        default='PRO',
+        blank=True,
+        null=True
+    )
+    
+    course = models.ForeignKey(
+        'course.Course',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='b2b_payments'
+    )
+    seats = models.IntegerField(default=0)
+    
+    payment_proof = models.FileField(
+        upload_to='b2b_receipts/', 
+        help_text=_("Bank transfer receipt or invoice copy")
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    admin_note = models.TextField(blank=True, help_text=_("Reason for rejection or internal notes"))
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        
+    def __str__(self):
+        return f"B2B Payment - {self.organization.name} - {self.amount}"

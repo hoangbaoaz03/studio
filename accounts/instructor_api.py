@@ -27,8 +27,8 @@ def instructor_dashboard(request):
             status=status.HTTP_403_FORBIDDEN
         )
     
-    # Get instructor's courses
-    courses = Course.objects.filter(instructor=request.user, is_deleted=False)
+    # Get instructor's courses (via M2M CourseInstructor table)
+    courses = Course.objects.filter(courseinstructors__instructor=request.user, is_deleted=False)
     
     # Total statistics
     total_courses = courses.count()
@@ -117,7 +117,7 @@ def course_analytics(request, course_id):
     Get detailed analytics for a specific course
     """
     try:
-        course = Course.objects.get(id=course_id, instructor=request.user)
+        course = Course.objects.get(id=course_id, courseinstructors__instructor=request.user)
     except Course.DoesNotExist:
         return Response(
             {"error": "Course not found or you don't have permission"},
@@ -195,7 +195,7 @@ def student_progress_report(request, course_id):
     Get student progress report for a course
     """
     try:
-        course = Course.objects.get(id=course_id, instructor=request.user)
+        course = Course.objects.get(id=course_id, courseinstructors__instructor=request.user)
     except Course.DoesNotExist:
         return Response(
             {"error": "Course not found"},

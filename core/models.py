@@ -10,7 +10,7 @@ class SiteSettings(models.Model):
     """
     Global platform settings
     """
-    site_name = models.CharField(max_length=100, default="SkyLearn")
+    site_name = models.CharField(max_length=100, default="Studigo")
     tagline = models.CharField(max_length=200, blank=True)
     site_description = models.TextField(blank=True)
     

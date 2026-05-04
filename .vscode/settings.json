@@ -13,6 +13,8 @@
     }
   ],
   "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter"
-  }
+    "editor.defaultFormatter": "meta.pyrefly"
+  },
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/Scripts/python.exe",
+  "python.analysis.extraPaths": ["${workspaceFolder}"]
 }

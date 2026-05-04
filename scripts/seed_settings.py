@@ -26,7 +26,7 @@ DEFAULTS = [
     },
     {
         'key': 'support_email',
-        'value': 'support@skylearn.com',
+        'value': 'support@studigo.com',
         'type': 'string',
         'description': 'Contact email displayed in footer',
         'is_public': True

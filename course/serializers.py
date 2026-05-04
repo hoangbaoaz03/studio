@@ -260,7 +260,7 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
     
 
     def create(self, validated_data):
-        validated_data['instructor'] = self.context['request'].user
+        # instructor is set via CourseInstructor M2M in perform_create
         return super().create(validated_data)
 
 
@@ -268,31 +268,13 @@ class AnnouncementSerializer(serializers.ModelSerializer):
     instructor_name = serializers.CharField(source='user.get_full_name', read_only=True)
     instructor_avatar = serializers.SerializerMethodField()
     created_at_formatted = serializers.DateTimeField(source='created_at', format="%b %d, %Y", read_only=True)
-    
-    class Meta:
-        model = Announcement
-        fields = ['id', 'title', 'content', 'created_at', 'created_at_formatted', 'instructor_name', 'instructor_avatar']
-        
-    course_id = serializers.IntegerField(source='course.id', read_only=True)
+    course_id = serializers.IntegerField(write_only=True, required=False)
     
     class Meta:
         model = Announcement
         fields = ['id', 'course_id', 'title', 'content', 'created_at', 'created_at_formatted', 'instructor_name', 'instructor_avatar']
         read_only_fields = ['id', 'created_at', 'instructor_name']
 
-    def create(self, validated_data):
-        user = self.context['request'].user
-        course_id = self.context['view'].kwargs.get('course_pk')
-        course = Course.objects.get(id=course_id)
-        
-        # Verify instructor
-        if course.instructor != user:
-            raise serializers.ValidationError("Only the instructor can post announcements")
-            
-        validated_data['user'] = user
-        validated_data['course'] = course
-        return super().create(validated_data)
-    
     def get_instructor_avatar(self, obj):
         # Placeholder or actual logic if Profile exists
         return None

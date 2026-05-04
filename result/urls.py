@@ -23,6 +23,8 @@ urlpatterns = [
     path('my-certificates/', student_api.my_certificates, name='my-certificates'),
     path('my-wishlist/', student_api.my_wishlist, name='my-wishlist'),
     path('player/<slug:course_slug>/', student_api.course_player_data, name='course-player'),
+    path('quiz/<int:lecture_id>/', student_api.get_quiz_data, name='quiz-data'),
+    path('quiz/<int:lecture_id>/submit/', student_api.submit_quiz_answers, name='quiz-submit'),
     path('certificate/<int:enrollment_id>/generate/', student_api.generate_certificate, name='generate-certificate'),
     
     # Learning Progress & Notes

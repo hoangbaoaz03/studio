@@ -73,3 +73,9 @@ wcwidth==0.2.14
 webencodings==0.5.1
 whitenoise==6.11.0
 wrapt==2.0.1
+google-generativeai==0.8.4
+PyPDF2==3.0.1
+numpy==1.26.4
+daphne==4.1.2
+dj-database-url==2.3.0
+gunicorn==23.0.0

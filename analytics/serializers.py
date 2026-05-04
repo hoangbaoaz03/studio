@@ -1,25 +1,37 @@
 from rest_framework import serializers
 
+
 class AnalyticsSummarySerializer(serializers.Serializer):
-    total_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    gross_revenue = serializers.FloatField()
+    net_revenue = serializers.FloatField()
+    b2c_revenue = serializers.FloatField()
+    b2b_revenue = serializers.FloatField()
+    instructor_commission = serializers.FloatField()
+    ai_tokens_used = serializers.IntegerField()
     total_users = serializers.IntegerField()
     active_courses = serializers.IntegerField()
-    platform_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+
 
 class TrendPointSerializer(serializers.Serializer):
     date = serializers.DateField()
-    revenue = serializers.DecimalField(max_digits=10, decimal_places=2)
+    revenue = serializers.FloatField()
+    b2c_revenue = serializers.FloatField()
+    b2b_revenue = serializers.FloatField()
+    ai_tokens_used = serializers.IntegerField()
     new_users = serializers.IntegerField()
+
 
 class TopCourseSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     title = serializers.CharField()
-    revenue = serializers.DecimalField(max_digits=10, decimal_places=2)
+    revenue = serializers.FloatField()
     enrollments = serializers.IntegerField()
+
 
 class CategoryDistributionSerializer(serializers.Serializer):
     name = serializers.CharField()
-    value = serializers.IntegerField()
+    value = serializers.FloatField()
+
 
 class DashboardAnalyticsSerializer(serializers.Serializer):
     summary = AnalyticsSummarySerializer()

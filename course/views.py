@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import models
 
 from .models import Category, Subcategory, Course, Section, Lecture, Announcement
 from .serializers import (
@@ -105,7 +106,7 @@ class CourseViewSet(viewsets.ModelViewSet):
             # Filter by instructor (for instructor dashboard public view)
             instructor_id = self.request.query_params.get('instructor', None)
             if instructor_id:
-                queryset = queryset.filter(instructor_id=instructor_id)
+                queryset = queryset.filter(courseinstructors__instructor_id=instructor_id)
             
             # Price range filter
             min_price = self.request.query_params.get('min_price', None)
@@ -128,8 +129,10 @@ class CourseViewSet(viewsets.ModelViewSet):
              # Relaxing check: user.is_instructor not strictly required for ownership check
              user = self.request.user
              if user.is_authenticated:
+                 if user.is_staff or user.is_superuser:
+                     return queryset # Admin can view ANY course
                  from django.db.models import Q
-                 return queryset.filter(Q(status='published') | Q(instructor=user))
+                 return queryset.filter(Q(status='published') | Q(courseinstructors__instructor=user))
              return queryset.filter(status='published')
              
         return queryset
@@ -145,18 +148,25 @@ class CourseViewSet(viewsets.ModelViewSet):
         # Ensure user is an instructor
         if not self.request.user.is_instructor:
             raise PermissionError("Only instructors can create courses")
-        serializer.save(instructor=self.request.user)
+        from .models import CourseInstructor
+        course = serializer.save()
+        # Create M2M link as primary instructor
+        CourseInstructor.objects.get_or_create(
+            course=course,
+            instructor=self.request.user,
+            defaults={'is_primary': True}
+        )
     
     def perform_update(self, serializer):
         # Ensure user owns the course
         course = self.get_object()
-        if course.instructor != self.request.user:
+        if not course.courseinstructors.filter(instructor=self.request.user).exists():
             raise PermissionError("You can only edit your own courses")
         serializer.save()
         
     def destroy(self, request, *args, **kwargs):
         course = self.get_object()
-        if course.instructor != request.user:
+        if not course.courseinstructors.filter(instructor=request.user).exists():
              return Response({"error": "Not authorized"}, status=403)
         course.is_deleted = True
         from django.utils import timezone
@@ -167,7 +177,7 @@ class CourseViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def trash(self, request):
         """List soft-deleted courses for instructor"""
-        courses = Course.objects.filter(instructor=request.user, is_deleted=True).order_by('-deleted_at')
+        courses = Course.objects.filter(courseinstructors__instructor=request.user, is_deleted=True).order_by('-deleted_at')
         serializer = CourseListSerializer(courses, many=True)
         return Response(serializer.data)
 
@@ -175,7 +185,7 @@ class CourseViewSet(viewsets.ModelViewSet):
     def restore(self, request, slug=None):
         """Restore a soft-deleted course"""
         course = self.get_object()
-        if course.instructor != request.user:
+        if not course.courseinstructors.filter(instructor=request.user).exists():
              return Response({"error": "Not authorized"}, status=403)
         course.is_deleted = False
         course.deleted_at = None
@@ -186,7 +196,7 @@ class CourseViewSet(viewsets.ModelViewSet):
     def permanent_delete(self, request, slug=None):
         """Permanently delete a course"""
         course = self.get_object()
-        if course.instructor != request.user:
+        if not course.courseinstructors.filter(instructor=request.user).exists():
              return Response({"error": "Not authorized"}, status=403)
         course.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -227,7 +237,7 @@ class CourseViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        courses = Course.objects.filter(instructor=request.user).order_by('-created_at')
+        courses = Course.objects.filter(courseinstructors__instructor=request.user).order_by('-created_at')
         serializer = CourseDetailSerializer(courses, many=True)
         return Response(serializer.data)
 
@@ -279,7 +289,7 @@ class SectionViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import ValidationError
             raise ValidationError({"course": "Course is required"})
             
-        if course.instructor != self.request.user:
+        if not course.courseinstructors.filter(instructor=self.request.user).exists():
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("You can only add sections to your own courses")
         serializer.save()
@@ -300,7 +310,7 @@ class SectionViewSet(viewsets.ModelViewSet):
             )
             
         course = Course.objects.get(id=course_id)
-        if course.instructor != request.user:
+        if not course.courseinstructors.filter(instructor=request.user).exists():
             return Response(
                 {"error": "Not authorized"}, 
                 status=status.HTTP_403_FORBIDDEN
@@ -336,6 +346,34 @@ class LectureViewSet(viewsets.ModelViewSet):
             print(f"DEBUG: Lecture Serializer Errors: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         self.perform_create(serializer)
+        
+        # If this is a quiz lecture, save quiz_data if provided
+        if request.data.get('lecture_type') == 'quiz':
+            import json
+            quiz_data_raw = request.data.get('quiz_data')
+            if quiz_data_raw:
+                from .models import QuizQuestion, QuizAnswer
+                try:
+                    quiz_data = json.loads(quiz_data_raw) if isinstance(quiz_data_raw, str) else quiz_data_raw
+                    lecture_obj = Lecture.objects.get(id=serializer.data['id'])
+                    for q_idx, q_data in enumerate(quiz_data):
+                        question = QuizQuestion.objects.create(
+                            lecture=lecture_obj,
+                            question_text=q_data['question'],
+                            explanation=q_data.get('explanation', ''),
+                            order=q_idx
+                        )
+                        for choice_text in q_data['choices']:
+                            is_correct = (choice_text.strip().lower() == q_data['correct_answer'].strip().lower())
+                            QuizAnswer.objects.create(
+                                question=question,
+                                answer_text=choice_text,
+                                is_correct=is_correct
+                            )
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+        
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     
@@ -350,7 +388,7 @@ class LectureViewSet(viewsets.ModelViewSet):
         except Section.DoesNotExist:
             raise serializers.ValidationError({"section": "Invalid section ID."})
             
-        if section.course.instructor != self.request.user:
+        if not section.course.courseinstructors.filter(instructor=self.request.user).exists():
             raise PermissionError("You can only add lectures to your own courses")
             
         serializer.save(section=section)
@@ -375,7 +413,7 @@ class LectureViewSet(viewsets.ModelViewSet):
         except Section.DoesNotExist:
             return Response({"error": "Invalid section"}, status=400)
             
-        if section.course.instructor != request.user:
+        if not section.course.courseinstructors.filter(instructor=request.user).exists():
             return Response(
                 {"error": "Not authorized"}, 
                 status=status.HTTP_403_FORBIDDEN
@@ -400,7 +438,7 @@ class LectureViewSet(viewsets.ModelViewSet):
         Real implementation would use boto3 to generate S3 presigned POST.
         """
         lecture = self.get_object()
-        if lecture.section.course.instructor != request.user:
+        if not lecture.section.course.courseinstructors.filter(instructor=request.user).exists():
              return Response({"error": "Not authorized"}, status=403)
              
         # Mock Response
@@ -412,6 +450,38 @@ class LectureViewSet(viewsets.ModelViewSet):
             "key": key
         })
 
+    @action(detail=False, methods=['post'], url_path='preview-quiz')
+    def preview_quiz(self, request):
+        """
+        Upload a document, parse it via AI, and return generated questions
+        for preview WITHOUT saving anything to the database.
+        """
+        if not getattr(request.user, 'is_instructor', False):
+            return Response({"error": "Only instructors can generate quizzes"}, status=status.HTTP_403_FORBIDDEN)
+            
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({"error": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            from .quiz_generator import extract_text_from_file, generate_quiz_from_text
+            
+            text = extract_text_from_file(file_obj, file_obj.name)
+            if len(text) < 50:
+                return Response({"error": "Could not extract enough text from the document."}, status=status.HTTP_400_BAD_REQUEST)
+                
+            questions_data = generate_quiz_from_text(text, num_questions=10)
+            
+            if not questions_data:
+                return Response({"error": "AI could not generate questions from this text."}, status=status.HTTP_400_BAD_REQUEST)
+                
+            return Response({"questions": questions_data})
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class AnnouncementViewSet(viewsets.ModelViewSet):
     """
@@ -421,20 +491,85 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     
     def get_queryset(self):
-        course_id = self.request.query_params.get('course_id')
-        if course_id:
-            return Announcement.objects.filter(course_id=course_id)
-        return Announcement.objects.none()
+        if self.action == 'list':
+            course_id = self.request.query_params.get('course_id')
+            if course_id:
+                return Announcement.objects.filter(course_id=course_id).order_by('-created_at')
+            return Announcement.objects.none()
+        return Announcement.objects.all()
         
     def perform_create(self, serializer):
         course_id = self.request.data.get('course_id')
         if not course_id:
             # Try from URL or context if available, or error
-            raise PermissionError("Course ID required")
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Course ID required")
             
         course = Course.objects.get(id=course_id)
         # Verify instructor
-        if course.instructor != self.request.user:
-             raise PermissionError("Only course instructor can post announcements")
+        if not course.courseinstructors.filter(instructor=self.request.user).exists():
+             from rest_framework.exceptions import PermissionDenied
+             raise PermissionDenied("Only course instructor can post announcements")
         
-        serializer.save(user=self.request.user, course=course)
+        announcement = serializer.save(user=self.request.user, course=course)
+        
+        # Notify enrolled students
+        from result.models import Enrollment
+        from core.models import Notification
+        
+        enrollments = Enrollment.objects.filter(course=course).select_related('student')
+        notifications = []
+        for enrollment in enrollments:
+            notifications.append(
+                Notification(
+                    recipient=enrollment.student,
+                    title=f"New Announcement in {course.title}",
+                    message=f"{self.request.user.get_full_name()} posted: '{announcement.title}'",
+                    notification_type='course',
+                    link=f"/course/{course.slug}/learn?tab=announcements"
+                )
+            )
+        if notifications:
+            Notification.objects.bulk_create(notifications)
+        
+        # Push notification via WebSocket to each enrolled student
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        channel_layer = get_channel_layer()
+        
+        for enrollment in enrollments:
+            async_to_sync(channel_layer.group_send)(
+                f"notifications_{enrollment.student.id}",
+                {"type": "send_notification", "data": {"event": "new_notification", "message": "New announcement"}}
+            )
+        
+        # Broadcast announcement to course channel for real-time
+        async_to_sync(channel_layer.group_send)(
+            f"course_{course.id}",
+            {
+                "type": "course_event",
+                "data": {
+                    "event": "new_announcement",
+                    "announcement": {
+                        "id": announcement.id,
+                        "title": announcement.title,
+                        "content": announcement.content,
+                        "user_name": self.request.user.get_full_name(),
+                        "created_at": announcement.created_at.isoformat() if announcement.created_at else None,
+                    }
+                }
+            }
+        )
+
+    def perform_update(self, serializer):
+        announcement = self.get_object()
+        if not announcement.course.courseinstructors.filter(instructor=self.request.user).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only the instructor can modify announcements")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not instance.course.courseinstructors.filter(instructor=self.request.user).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only the instructor can delete announcements")
+        instance.delete()

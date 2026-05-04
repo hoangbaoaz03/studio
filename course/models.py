@@ -90,6 +90,22 @@ class Subcategory(models.Model):
         return self.courses.filter(status='published').count()
 
 
+class CourseInstructor(models.Model):
+    course = models.ForeignKey('Course', on_delete=models.CASCADE, related_name='courseinstructors')
+    instructor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        limit_choices_to={'is_instructor': True}
+    )
+    is_primary = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ['course', 'instructor']
+
+    def __str__(self):
+        return f"{self.instructor} - {self.course}"
+
+
 class Course(models.Model):
     """
     Core course model for marketplace
@@ -113,11 +129,10 @@ class Course(models.Model):
     
     # Core info
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    instructor = models.ForeignKey(
+    instructors = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='courses',
-        limit_choices_to={'is_instructor': True}
+        through='CourseInstructor',
+        related_name='instructored_courses'
     )
     
     # Basic details
@@ -274,6 +289,13 @@ class Course(models.Model):
     
     def __str__(self):
         return self.title
+
+    @property
+    def instructor(self):
+        primary = self.courseinstructors.filter(is_primary=True).first()
+        if primary:
+            return primary.instructor
+        return self.instructors.first()
     
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -440,6 +462,14 @@ class Lecture(models.Model):
         default=0,
         help_text=_("Duration in seconds")
     )
+    duration_minutes = models.IntegerField(
+        default=0,
+        help_text=_("Estimated completion time in minutes")
+    )
+    max_attempts = models.IntegerField(
+        default=1,
+        help_text=_("Max attempts if lecture type is quiz")
+    )
     published_at = models.DateTimeField(null=True, blank=True, help_text=_("Scheduled publish time"))
     
     # Text/Article Content
@@ -466,6 +496,8 @@ class Lecture(models.Model):
     )
     admin_note = models.TextField(blank=True, help_text=_("Internal admin notes/rejection reason"))
     
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -473,6 +505,12 @@ class Lecture(models.Model):
         ordering = ['order', 'id']
         unique_together = ['section', 'order']
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Snapshot original video fields so post_save signal can detect real changes
+        self._original_video_file = self.video_file.name if self.video_file else None
+        self._original_video_url = self.video_url or None
+
     def __str__(self):
         return f"{self.section.course.title} - {self.title} ({self.lecture_type})"
 
